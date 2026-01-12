@@ -12,7 +12,7 @@ import { usePeerJS } from '@/composables/usePeerJS';
 import { dashboard } from '@/routes';
 import { type BreadcrumbItem } from '@/types';
 import { Head } from '@inertiajs/vue3';
-import { Video, VideoOff, Mic, MicOff, Monitor, Trash2, Plus, Play, Square, Link as LinkIcon, AlertCircle } from 'lucide-vue-next';
+import { Video, VideoOff, Mic, MicOff, Monitor, Trash2, Plus, Play, Square, Link as LinkIcon, AlertCircle, Edit2, Check, X } from 'lucide-vue-next';
 import { ref, onMounted, onUnmounted, watch } from 'vue';
 
 const breadcrumbs: BreadcrumbItem[] = [
@@ -54,14 +54,77 @@ const selectedVideoDevice = ref('');
 const selectedAudioDevice = ref('');
 const videoDevices = ref<MediaDeviceInfo[]>([]);
 const audioDevices = ref<MediaDeviceInfo[]>([]);
+const editingUrlIndex = ref<number | null>(null);
+const editingUrlValue = ref('');
+
+// LocalStorage keys
+const STORAGE_KEYS = {
+    RTMP_URLS: 'webrtc_rtmp_urls',
+    RECEIVER_PEER_ID: 'webrtc_receiver_peer_id',
+};
+
+// Load URLs from localStorage
+const loadStoredUrls = () => {
+    try {
+        const stored = localStorage.getItem(STORAGE_KEYS.RTMP_URLS);
+        if (stored) {
+            const urls = JSON.parse(stored);
+            if (Array.isArray(urls)) {
+                rtmpUrls.value = urls;
+                console.log('[Dashboard] Loaded URLs from localStorage:', urls);
+            }
+        }
+        
+        const storedPeerId = localStorage.getItem(STORAGE_KEYS.RECEIVER_PEER_ID);
+        if (storedPeerId) {
+            receiverPeerId.value = storedPeerId;
+            console.log('[Dashboard] Loaded receiver peer ID from localStorage:', storedPeerId);
+        }
+    } catch (error) {
+        console.error('[Dashboard] Error loading from localStorage:', error);
+    }
+};
+
+// Save URLs to localStorage
+const saveUrlsToStorage = () => {
+    try {
+        localStorage.setItem(STORAGE_KEYS.RTMP_URLS, JSON.stringify(rtmpUrls.value));
+        console.log('[Dashboard] Saved URLs to localStorage:', rtmpUrls.value);
+    } catch (error) {
+        console.error('[Dashboard] Error saving to localStorage:', error);
+    }
+};
+
+// Save receiver peer ID to localStorage
+const savePeerIdToStorage = () => {
+    try {
+        localStorage.setItem(STORAGE_KEYS.RECEIVER_PEER_ID, receiverPeerId.value);
+        console.log('[Dashboard] Saved receiver peer ID to localStorage:', receiverPeerId.value);
+    } catch (error) {
+        console.error('[Dashboard] Error saving peer ID to localStorage:', error);
+    }
+};
 
 onMounted(async () => {
     initialize();
+    loadStoredUrls();
     await loadDevices();
 });
 
 onUnmounted(() => {
     stopStream();
+});
+
+// Watch for URL changes to save to localStorage
+watch(rtmpUrls, () => {
+    saveUrlsToStorage();
+}, { deep: true });
+
+// Watch for receiver peer ID changes to save to localStorage
+watch(receiverPeerId, () => {
+    if (receiverPeerId.value) {
+        savePeerIdToStorage();
+    }
 });
 
 // Watch for connection status
@@ -210,7 +273,32 @@ const removeRtmpUrl = (url: string) => {
     }
 };
 
-const startBroadcast = () => {
+const startEditingUrl = (index: number) => {
+    editingUrlIndex.value = index;
+    editingUrlValue.value = rtmpUrls.value[index];
+};
+
+const saveEditedUrl = () => {
+    if (editingUrlIndex.value !== null && editingUrlValue.value) {
+        const oldUrl = rtmpUrls.value[editingUrlIndex.value];
+        rtmpUrls.value[editingUrlIndex.value] = editingUrlValue.value;
+        
+        // Update backend if connected
+        if (isConnected.value) {
+            removeRtmpUrlFromPeer(oldUrl);
+            addRtmpUrlToPeer(editingUrlValue.value);
+        }
+        
+        cancelEditingUrl();
+    }
+};
+
+const cancelEditingUrl = () => {
+    editingUrlIndex.value = null;
+    editingUrlValue.value = '';
+};
+
+const startBroadcast = async () => {
     console.log('[Dashboard] startBroadcast called');
     console.log('[Dashboard] isConnected:', isConnected.value);
     console.log('[Dashboard] rtmpUrls:', rtmpUrls.value);
@@ -221,6 +309,22 @@ const startBroadcast = () => {
         showConnectionDialog.value = true;
         return;
     }
+
+    // Check if there are RTMP URLs
+    if (rtmpUrls.value.length === 0) {
+        console.log('[Dashboard] No RTMP URLs configured');
+        alert('Please add at least one RTMP URL before starting broadcast');
+        return;
+    }
+
+    // Send all URLs to backend first
+    console.log('[Dashboard] Sending RTMP URLs to backend:', rtmpUrls.value);
+    for (const url of rtmpUrls.value) {
+        addRtmpUrlToPeer(url);
+    }
+
+    // Wait a moment for URLs to be added
+    await new Promise(resolve => setTimeout(resolve, 500));
 
     console.log('[Dashboard] Calling startRecording()');
     const result = startRecording();
@@ -404,19 +508,58 @@ const changeAudioDevice = async () => {
 
                             <div class="space-y-2">
                                 <div
-                                    v-for="url in rtmpUrls"
+                                    v-for="(url, index) in rtmpUrls"
                                     :key="url"
-                                    class="flex items-center justify-between rounded-lg border border-border bg-muted/30 p-2 text-xs"
+                                    class="flex items-center gap-2 rounded-lg border border-border bg-muted/30 p-2 text-xs"
                                 >
-                                    <span class="truncate">{{ url }}</span>
-                                    <Button
-                                        @click="removeRtmpUrl(url)"
-                                        variant="ghost"
-                                        size="sm"
-                                        class="h-6 w-6 p-0"
-                                    >
-                                        <Trash2 class="h-3 w-3" />
-                                    </Button>
+                                    <template v-if="editingUrlIndex === index">
+                                        <Input
+                                            v-model="editingUrlValue"
+                                            class="h-7 flex-1 text-xs"
+                                            @keyup.enter="saveEditedUrl"
+                                            @keyup.esc="cancelEditingUrl"
+                                            autofocus
+                                        />
+                                        <Button
+                                            @click="saveEditedUrl"
+                                            variant="ghost"
+                                            size="sm"
+                                            class="h-7 w-7 p-0 text-green-600 hover:text-green-700"
+                                            title="Save"
+                                        >
+                                            <Check class="h-3.5 w-3.5" />
+                                        </Button>
+                                        <Button
+                                            @click="cancelEditingUrl"
+                                            variant="ghost"
+                                            size="sm"
+                                            class="h-7 w-7 p-0 text-red-600 hover:text-red-700"
+                                            title="Cancel"
+                                        >
+                                            <X class="h-3.5 w-3.5" />
+                                        </Button>
+                                    </template>
+                                    <template v-else>
+                                        <span class="flex-1 truncate" :title="url">{{ url }}</span>
+                                        <Button
+                                            @click="startEditingUrl(index)"
+                                            variant="ghost"
+                                            size="sm"
+                                            class="h-7 w-7 p-0"
+                                            title="Edit"
+                                        >
+                                            <Edit2 class="h-3 w-3" />
+                                        </Button>
+                                        <Button
+                                            @click="removeRtmpUrl(url)"
+                                            variant="ghost"
+                                            size="sm"
+                                            class="h-7 w-7 p-0 text-red-600 hover:text-red-700"
+                                            title="Delete"
+                                        >
+                                            <Trash2 class="h-3 w-3" />
+                                        </Button>
+                                    </template>
                                 </div>
                                 <p v-if="rtmpUrls.length === 0" class="text-center text-sm text-muted-foreground">
                                     No destinations added
