@@ -32,6 +32,7 @@ const {
     initialize,
     connect,
     sendMediaStream,
+    replaceMediaStream,
     startRecording,
     stopRecording,
     addRtmpUrl: addRtmpUrlToPeer,
@@ -204,9 +205,16 @@ const startStream = async () => {
             videoRef.value.srcObject = stream.value;
         }
 
-        // Send media stream to receiver if connected
-        if (isConnected.value && receiverPeerId.value) {
-            sendMediaStream(stream.value, receiverPeerId.value);
+        // Send or replace media stream to receiver if connected
+        if (isConnected.value) {
+            if (receiverPeerId.value) {
+                // Check if we already have an active connection by trying to replace tracks
+                const replaced = await replaceMediaStream(stream.value);
+                // If replace failed (no connection), create new connection
+                if (!replaced) {
+                    sendMediaStream(stream.value, receiverPeerId.value);
+                }
+            }
         }
     } catch (error) {
         console.error('Error starting stream:', error);
@@ -264,9 +272,10 @@ const captureScreen = async () => {
             videoRef.value.srcObject = stream.value;
         }
 
-        // Send screen stream to receiver if connected
-        if (isConnected.value && receiverPeerId.value) {
-            sendMediaStream(stream.value, receiverPeerId.value);
+        // Replace tracks on existing connection if connected
+        if (isConnected.value) {
+            console.log('[Dashboard] Replacing tracks with screen capture');
+            await replaceMediaStream(stream.value);
         }
     } catch (error) {
         console.error('Error capturing screen:', error);

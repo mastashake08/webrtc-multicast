@@ -326,6 +326,53 @@ export function usePeerJS() {
         isConnected.value = false;
     };
 
+    const replaceMediaStream = async (stream: MediaStream): Promise<boolean> => {
+        console.log('[replaceMediaStream] Replacing tracks with new stream');
+        
+        if (!mediaConnection.value) {
+            console.error('[replaceMediaStream] No media connection to replace tracks');
+            return false;
+        }
+
+        try {
+            const pc = (mediaConnection.value as any).peerConnection as RTCPeerConnection;
+            if (!pc) {
+                console.error('[replaceMediaStream] No peer connection found');
+                return false;
+            }
+
+            const senders = pc.getSenders();
+            console.log('[replaceMediaStream] Current senders:', senders.length);
+
+            // Replace video track
+            const videoTrack = stream.getVideoTracks()[0];
+            const videoSender = senders.find(sender => sender.track?.kind === 'video');
+            if (videoSender && videoTrack) {
+                await videoSender.replaceTrack(videoTrack);
+                console.log('[replaceMediaStream] ✓ Replaced video track');
+            } else {
+                console.warn('[replaceMediaStream] No video sender found or no video track in new stream');
+            }
+
+            // Replace audio track
+            const audioTrack = stream.getAudioTracks()[0];
+            const audioSender = senders.find(sender => sender.track?.kind === 'audio');
+            if (audioSender && audioTrack) {
+                await audioSender.replaceTrack(audioTrack);
+                console.log('[replaceMediaStream] ✓ Replaced audio track');
+            } else {
+                console.warn('[replaceMediaStream] No audio sender found or no audio track in new stream');
+            }
+
+            console.log('[replaceMediaStream] Successfully replaced all tracks');
+            return true;
+        } catch (err: any) {
+            error.value = err.message;
+            console.error('[replaceMediaStream] Failed to replace tracks:', err);
+            return false;
+        }
+    };
+
     const destroy = () => {
         disconnect();
 
@@ -352,6 +399,7 @@ export function usePeerJS() {
         initialize,
         connect,
         sendMediaStream,
+        replaceMediaStream,
         startRecording,
         stopRecording,
         addRtmpUrl,
