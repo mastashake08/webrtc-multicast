@@ -211,12 +211,22 @@ const removeRtmpUrl = (url: string) => {
 };
 
 const startBroadcast = () => {
+    console.log('[Dashboard] startBroadcast called');
+    console.log('[Dashboard] isConnected:', isConnected.value);
+    console.log('[Dashboard] rtmpUrls:', rtmpUrls.value);
+    console.log('[Dashboard] stream:', stream.value);
+    
     if (!isConnected.value) {
+        console.log('[Dashboard] Not connected, showing connection dialog');
         showConnectionDialog.value = true;
         return;
     }
 
-    if (startRecording()) {
+    console.log('[Dashboard] Calling startRecording()');
+    const result = startRecording();
+    console.log('[Dashboard] startRecording() returned:', result);
+    
+    if (result) {
         console.log('Starting broadcast to:', rtmpUrls.value);
         // Poll status to update UI
         setTimeout(() => getStatus(), 1000);
@@ -308,87 +318,6 @@ const changeAudioDevice = async () => {
                 </CardContent>
             </Card>
 
-            <!-- 
-    } catch (error) {
-        console.error('Error capturing screen:', error);
-    }
-};
-
-const connectToPeer = async () => {
-    if (!receiverPeerId.value) {
-        alert('Please enter a receiver Peer ID');
-        return;
-    }
-
-    const success = await connect(receiverPeerId.value);
-    if (success && stream.value) {
-        sendMediaStream(stream.value, receiverPeerId.value);
-    }
-};
-
-const addRtmpUrl = () => {
-    if (newRtmpUrl.value && !rtmpUrls.value.includes(newRtmpUrl.value)) {
-        rtmpUrls.value.push(newRtmpUrl.value);
-        
-        // Send to backend if connected
-        if (isConnected.value) {
-            addRtmpUrlToPeer(newRtmpUrl.value);
-        }
-        
-        newRtmpUrl.value = '';
-    }
-};
-
-const removeRtmpUrl = (url: string) => {
-    rtmpUrls.value = rtmpUrls.value.filter(u => u !== url);
-    
-    // Remove from backend if connected
-    if (isConnected.value) {
-        removeRtmpUrlFromPeer(url);
-    }
-};
-
-const startBroadcast = () => {
-    if (!isConnected.value) {
-        showConnectionDialog.value = true;
-        return;
-    }
-
-    if (startRecording()) {
-        console.log('Starting broadcast to:', rtmpUrls.value);
-        // Poll status to update UI
-        setTimeout(() => getStatus(), 1000);
-    }
-};
-
-const stopBroadcast = () => {
-    if (stopRecording()) {
-        console.log('Stopping broadcast');
-        // Poll status to update UI
-        setTimeout(() => getStatus(), 1000);
-    }
-};
-
-const changeVideoDevice = async () => {
-    if (stream.value) {
-        stopStream();
-        await startStream();
-    }
-};
-
-const changeAudioDevice = async () => {
-    if (stream.value) {
-        stopStream();
-        await startStream();
-    }
-};
-</script>
-
-<template>
-    <Head title="Dashboard" />
-
-    <AppLayout :breadcrumbs="breadcrumbs">
-        <div class="flex h-full flex-1 flex-col gap-4 p-4">
             <!-- Preview and RTMP URLs -->
             <div class="grid gap-4 lg:grid-cols-3">
                 <!-- Video Preview -->

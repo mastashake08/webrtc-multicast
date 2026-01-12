@@ -62,6 +62,23 @@ withDefaults(
                         Stream your camera or screen to multiple RTMP destinations simultaneously using WebRTC technology.
                     </p>
                     
+                    <div class="mb-6 rounded-lg border border-[#e3e3e0] bg-[#FDFDFC] p-4 dark:border-[#3E3E3A] dark:bg-[#0a0a0a]">
+                        <p class="mb-2 text-sm font-medium text-[#1b1b18] dark:text-[#EDEDEC]">⚡️ Requires Backend Server</p>
+                        <p class="mb-2 text-sm text-[#706f6c] dark:text-[#A1A09A]">
+                            This application works with the 
+                            <a 
+                                href="https://github.com/mastashake08/webrtc-rtmp" 
+                                target="_blank"
+                                class="font-medium text-[#f53003] underline underline-offset-2 dark:text-[#FF4433]"
+                            >
+                                webrtc-rtmp server package
+                            </a>
+                        </p>
+                        <p class="text-sm text-[#706f6c] dark:text-[#A1A09A]">
+                            Deploy the Python backend server first, then connect using its Peer ID in your dashboard.
+                        </p>
+                    </div>
+                    
                     <div class="mb-6 space-y-4">
                         <div class="flex items-start gap-3">
                             <svg class="mt-1 h-5 w-5 text-[#f53003] dark:text-[#FF4433]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
