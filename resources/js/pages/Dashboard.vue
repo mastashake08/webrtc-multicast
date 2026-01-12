@@ -49,6 +49,7 @@ const isStreaming = ref(false);
 const videoEnabled = ref(true);
 const audioEnabled = ref(true);
 const rtmpUrls = ref<string[]>([]);
+const enabledUrls = ref<Set<string>>(new Set());
 const newRtmpUrl = ref('');
 const selectedVideoDevice = ref('');
 const selectedAudioDevice = ref('');
@@ -60,6 +61,7 @@ const editingUrlValue = ref('');
 // LocalStorage keys
 const STORAGE_KEYS = {
     RTMP_URLS: 'webrtc_rtmp_urls',
+    ENABLED_URLS: 'webrtc_enabled_urls',
     RECEIVER_PEER_ID: 'webrtc_receiver_peer_id',
 };
 
@@ -72,6 +74,15 @@ const loadStoredUrls = () => {
             if (Array.isArray(urls)) {
                 rtmpUrls.value = urls;
                 console.log('[Dashboard] Loaded URLs from localStorage:', urls);
+            }
+        }
+        
+        const storedEnabled = localStorage.getItem(STORAGE_KEYS.ENABLED_URLS);
+        if (storedEnabled) {
+            const enabled = JSON.parse(storedEnabled);
+            if (Array.isArray(enabled)) {
+                enabledUrls.value = new Set(enabled);
+                console.log('[Dashboard] Loaded enabled URLs from localStorage:', enabled);
             }
         }
         
@@ -89,7 +100,9 @@ const loadStoredUrls = () => {
 const saveUrlsToStorage = () => {
     try {
         localStorage.setItem(STORAGE_KEYS.RTMP_URLS, JSON.stringify(rtmpUrls.value));
+        localStorage.setItem(STORAGE_KEYS.ENABLED_URLS, JSON.stringify([...enabledUrls.value]));
         console.log('[Dashboard] Saved URLs to localStorage:', rtmpUrls.value);
+        console.log('[Dashboard] Saved enabled URLs to localStorage:', [...enabledUrls.value]);
     } catch (error) {
         console.error('[Dashboard] Error saving to localStorage:', error);
     }
@@ -117,6 +130,11 @@ onUnmounted(() => {
 
 // Watch for URL changes to save to localStorage
 watch(rtmpUrls, () => {
+    saveUrlsToStorage();
+}, { deep: true });
+
+// Watch for enabled URLs changes to save to localStorage
+watch(enabledUrls, () => {
     saveUrlsToStorage();
 }, { deep: true });
 
@@ -228,9 +246,9 @@ const captureScreen = async () => {
         // @ts-ignore - displayMedia is not in TypeScript types yet
         stream.value = await navigator.mediaDevices.getDisplayMedia({
             video: {
-                width: { ideal: 3840, min: 1920 },      // 4K ideal, 1080p minimum
-                height: { ideal: 2160, min: 1080 },     // 4K ideal, 1080p minimum
-                frameRate: { ideal: 60, min: 30 },      // 60fps ideal
+                width: { ideal: 3840 },                 // 4K ideal
+                height: { ideal: 2160 },                // 4K ideal
+                frameRate: { ideal: 60 },               // 60fps ideal
                 cursor: 'always'                        // Always show cursor
             },
             audio: {
@@ -270,6 +288,7 @@ const connectToPeer = async () => {
 const addRtmpUrl = () => {
     if (newRtmpUrl.value && !rtmpUrls.value.includes(newRtmpUrl.value)) {
         rtmpUrls.value.push(newRtmpUrl.value);
+        enabledUrls.value.add(newRtmpUrl.value);  // Enable by default
         
         // Send to backend if connected
         if (isConnected.value) {
@@ -282,6 +301,7 @@ const addRtmpUrl = () => {
 
 const removeRtmpUrl = (url: string) => {
     rtmpUrls.value = rtmpUrls.value.filter(u => u !== url);
+    enabledUrls.value.delete(url);
     
     // Remove from backend if connected
     if (isConnected.value) {
@@ -314,10 +334,27 @@ const cancelEditingUrl = () => {
     editingUrlValue.value = '';
 };
 
+const toggleUrl = (url: string) => {
+    if (enabledUrls.value.has(url)) {
+        enabledUrls.value.delete(url);
+        // Remove from backend if connected and streaming
+        if (isConnected.value && isStreaming.value) {
+            removeRtmpUrlFromPeer(url);
+        }
+    } else {
+        enabledUrls.value.add(url);
+        // Add to backend if connected and streaming
+        if (isConnected.value && isStreaming.value) {
+            addRtmpUrlToPeer(url);
+        }
+    }
+};
+
 const startBroadcast = async () => {
     console.log('[Dashboard] startBroadcast called');
     console.log('[Dashboard] isConnected:', isConnected.value);
     console.log('[Dashboard] rtmpUrls:', rtmpUrls.value);
+    console.log('[Dashboard] enabledUrls:', [...enabledUrls.value]);
     console.log('[Dashboard] stream:', stream.value);
     
     if (!isConnected.value) {
@@ -326,16 +363,19 @@ const startBroadcast = async () => {
         return;
     }
 
-    // Check if there are RTMP URLs
-    if (rtmpUrls.value.length === 0) {
-        console.log('[Dashboard] No RTMP URLs configured');
-        alert('Please add at least one RTMP URL before starting broadcast');
+    // Get enabled URLs
+    const urlsToStream = rtmpUrls.value.filter(url => enabledUrls.value.has(url));
+
+    // Check if there are enabled RTMP URLs
+    if (urlsToStream.length === 0) {
+        console.log('[Dashboard] No enabled RTMP URLs');
+        alert('Please enable at least one RTMP URL before starting broadcast');
         return;
     }
 
-    // Send all URLs to backend first
-    console.log('[Dashboard] Sending RTMP URLs to backend:', rtmpUrls.value);
-    for (const url of rtmpUrls.value) {
+    // Send only enabled URLs to backend first
+    console.log('[Dashboard] Sending enabled RTMP URLs to backend:', urlsToStream);
+    for (const url of urlsToStream) {
         addRtmpUrlToPeer(url);
     }
 
@@ -347,7 +387,7 @@ const startBroadcast = async () => {
     console.log('[Dashboard] startRecording() returned:', result);
     
     if (result) {
-        console.log('Starting broadcast to:', rtmpUrls.value);
+        console.log('Starting broadcast to:', urlsToStream);
         // Poll status to update UI
         setTimeout(() => getStatus(), 1000);
     }
@@ -556,7 +596,20 @@ const changeAudioDevice = async () => {
                                         </Button>
                                     </template>
                                     <template v-else>
-                                        <span class="flex-1 truncate" :title="url">{{ url }}</span>
+                                        <input 
+                                            type="checkbox"
+                                            :checked="enabledUrls.has(url)"
+                                            @change="toggleUrl(url)"
+                                            class="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                                            :title="enabledUrls.has(url) ? 'Enabled' : 'Disabled'"
+                                        />
+                                        <span 
+                                            class="flex-1 truncate" 
+                                            :title="url"
+                                            :class="{ 'text-muted-foreground': !enabledUrls.has(url) }"
+                                        >
+                                            {{ url }}
+                                        </span>
                                         <Button
                                             @click="startEditingUrl(index)"
                                             variant="ghost"
@@ -586,11 +639,11 @@ const changeAudioDevice = async () => {
                                 <Button
                                     v-if="!isStreaming"
                                     @click="startBroadcast"
-                                    :disabled="rtmpUrls.length === 0 || !stream"
+                                    :disabled="enabledUrls.size === 0 || !stream"
                                     class="w-full"
                                 >
                                     <Play class="mr-2 h-4 w-4" />
-                                    Start Broadcast
+                                    Start Broadcast ({{ enabledUrls.size }})
                                 </Button>
                                 <Button
                                     v-else
