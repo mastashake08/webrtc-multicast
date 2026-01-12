@@ -165,13 +165,18 @@ const startStream = async () => {
         const constraints: MediaStreamConstraints = {
             video: videoEnabled.value ? {
                 deviceId: selectedVideoDevice.value ? { exact: selectedVideoDevice.value } : undefined,
-                width: { ideal: 1920 },
-                height: { ideal: 1080 }
+                width: { ideal: 3840, min: 1280 },      // 4K ideal, 720p minimum
+                height: { ideal: 2160, min: 720 },      // 4K ideal, 720p minimum
+                frameRate: { ideal: 60, min: 30 },      // 60fps ideal, 30fps minimum
+                aspectRatio: { ideal: 16/9 }
             } : false,
             audio: audioEnabled.value ? {
                 deviceId: selectedAudioDevice.value ? { exact: selectedAudioDevice.value } : undefined,
                 echoCancellation: true,
-                noiseSuppression: true
+                noiseSuppression: true,
+                autoGainControl: true,
+                sampleRate: { ideal: 48000 },           // 48kHz for high quality
+                channelCount: { ideal: 2 }              // Stereo
             } : false
         };
 
@@ -222,8 +227,19 @@ const captureScreen = async () => {
         stopStream();
         // @ts-ignore - displayMedia is not in TypeScript types yet
         stream.value = await navigator.mediaDevices.getDisplayMedia({
-            video: { width: { ideal: 1920 }, height: { ideal: 1080 } },
-            audio: true
+            video: {
+                width: { ideal: 3840, min: 1920 },      // 4K ideal, 1080p minimum
+                height: { ideal: 2160, min: 1080 },     // 4K ideal, 1080p minimum
+                frameRate: { ideal: 60, min: 30 },      // 60fps ideal
+                cursor: 'always'                        // Always show cursor
+            },
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+                sampleRate: { ideal: 48000 },
+                channelCount: { ideal: 2 }
+            }
         });
         
         if (videoRef.value) {
