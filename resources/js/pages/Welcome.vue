@@ -57,11 +57,43 @@ withDefaults(
                 <div
                     class="flex-1 rounded-br-lg rounded-bl-lg bg-white p-6 pb-12 text-[13px] leading-[20px] shadow-[inset_0px_0px_0px_1px_rgba(26,26,0,0.16)] lg:rounded-tl-lg lg:rounded-br-none lg:p-20 dark:bg-[#161615] dark:text-[#EDEDEC] dark:shadow-[inset_0px_0px_0px_1px_#fffaed2d]"
                 >
-                    <h1 class="mb-1 font-medium">Let's get started</h1>
-                    <p class="mb-2 text-[#706f6c] dark:text-[#A1A09A]">
-                        Laravel has an incredibly rich ecosystem. <br />We
-                        suggest starting with the following.
+                    <h1 class="mb-4 text-3xl font-semibold">WebRTC Multicast Streaming</h1>
+                    <p class="mb-6 text-[#706f6c] dark:text-[#A1A09A]">
+                        Stream your camera or screen to multiple RTMP destinations simultaneously using WebRTC technology.
                     </p>
+                    
+                    <div class="mb-6 space-y-4">
+                        <div class="flex items-start gap-3">
+                            <svg class="mt-1 h-5 w-5 text-[#f53003] dark:text-[#FF4433]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                            </svg>
+                            <div>
+                                <h3 class="font-medium">Multi-Platform Streaming</h3>
+                                <p class="text-[#706f6c] dark:text-[#A1A09A]">Stream to YouTube, Twitch, Facebook Live, and custom RTMP servers simultaneously</p>
+                            </div>
+                        </div>
+                        
+                        <div class="flex items-start gap-3">
+                            <svg class="mt-1 h-5 w-5 text-[#f53003] dark:text-[#FF4433]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                            </svg>
+                            <div>
+                                <h3 class="font-medium">WebRTC Technology</h3>
+                                <p class="text-[#706f6c] dark:text-[#A1A09A]">Low-latency peer-to-peer streaming using modern WebRTC protocols</p>
+                            </div>
+                        </div>
+                        
+                        <div class="flex items-start gap-3">
+                            <svg class="mt-1 h-5 w-5 text-[#f53003] dark:text-[#FF4433]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                            </svg>
+                            <div>
+                                <h3 class="font-medium">Real-Time Control</h3>
+                                <p class="text-[#706f6c] dark:text-[#A1A09A]">Manage streams, add/remove destinations, and control settings in real-time</p>
+                            </div>
+                        </div>
+                    </div>
+
                     <ul class="mb-4 flex flex-col lg:mb-6">
                         <li
                             class="relative flex items-center gap-4 py-2 before:absolute before:top-1/2 before:bottom-0 before:left-[0.4rem] before:border-l before:border-[#e3e3e0] dark:before:border-[#3E3E3A]"
@@ -78,28 +110,21 @@ withDefaults(
                                 </span>
                             </span>
                             <span>
-                                Read the
-                                <a
-                                    href="https://laravel.com/docs"
-                                    target="_blank"
-                                    class="ml-1 inline-flex items-center space-x-1 font-medium text-[#f53003] underline underline-offset-4 dark:text-[#FF4433]"
+                                Get started by
+                                <Link
+                                    v-if="$page.props.auth.user"
+                                    :href="dashboard()"
+                                    class="ml-1 font-medium text-[#f53003] underline underline-offset-4 dark:text-[#FF4433]"
                                 >
-                                    <span>Documentation</span>
-                                    <svg
-                                        width="10"
-                                        height="11"
-                                        viewBox="0 0 10 11"
-                                        fill="none"
-                                        xmlns="http://www.w3.org/2000/svg"
-                                        class="h-2.5 w-2.5"
-                                    >
-                                        <path
-                                            d="M7.70833 6.95834V2.79167H3.54167M2.5 8L7.5 3.00001"
-                                            stroke="currentColor"
-                                            stroke-linecap="square"
-                                        />
-                                    </svg>
-                                </a>
+                                    going to your dashboard
+                                </Link>
+                                <Link
+                                    v-else
+                                    :href="login()"
+                                    class="ml-1 font-medium text-[#f53003] underline underline-offset-4 dark:text-[#FF4433]"
+                                >
+                                    logging in
+                                </Link>
                             </span>
                         </li>
                         <li

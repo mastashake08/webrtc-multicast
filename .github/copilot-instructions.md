@@ -2,7 +2,15 @@
 
 ## Architecture Overview
 
-This is a **Laravel 12 + Vue 3 + Inertia.js + TypeScript** full-stack application with SSR support.
+This is a **Laravel 12 + Vue 3 + Inertia.js + TypeScript** full-stack application with SSR support that functions as a **WebRTC streaming sender** using PeerJS to connect to an aiortc-rtmp backend bridge server.
+
+### Application Purpose
+- **WebRTC Sender**: Send-only transceiver that streams audio/video to a backend aiortc-rtmp server
+- **PeerJS Integration**: Uses PeerJS library to establish peer connections via Peer ID
+- **WebRTC**: PeerJS for peer-to-peer connections and media streaming
+- **Streaming Backend**: aiortc-rtmp bridge server (Python-based, separate repository)
+- **RTMP Multistreaming**: Control backend RTMP streaming to multiple platforms (YouTube, Twitch, Facebook Live, etc.)
+- **Data Channel Control**: Send commands to backend server via WebRTC data channels
 
 ### Stack Components
 - **Backend**: Laravel 12 (PHP 8.2+) with Laravel Fortify for authentication
@@ -75,8 +83,41 @@ import { cn } from '@/lib/utils';
 
 #### Route Organization
 - [routes/web.php](routes/web.php) - Main routes (home, dashboard)
+- [routes/api.php](routes/api.php) - API routes with Sanctum authentication
 - [routes/settings.php](routes/settings.php) - Settings-related routes (required by web.php)
 - Settings routes are namespaced: `/settings/profile`, `/settings/password`, etc.
+
+#### API Development with Sanctum
+- Laravel Sanctum installed for API authentication
+- Token-based auth: `->middleware('auth:sanctum')`
+- Stateful domains configured in [config/sanctum.php](config/sanctum.php)
+- Example: `Route::get('/user', fn(Request $request) => $request->user())->middleware('auth:sanctum')`
+
+#### Action Pattern (Not Services)
+- **Use Actions, not Service classes** for business logic
+- Actions located in `app/Actions/` directory
+- Fortify actions: `CreateNewUser`, `ResetUserPassword` in `app/Actions
+
+#### Form Request Validation
+- Custom validation in `app/Http/Requests/` directory
+- Namespaced by feature: `Settings/ProfileUpdateRequest`
+- Example:
+  ```php
+  class ProfileUpdateRequest extends FormRequest {
+      public function rules(): array {
+          return ['name' => ['required', 'string', 'max:255'], ...];
+      }
+  }
+  ```
+- Type-hint in controller: `public function update(ProfileUpdateRequest $request)`/Fortify/`
+- Actions implement contracts (e.g., `CreatesNewUsers`) for framework integration
+- Example structure:
+  ```php
+  class CreateNewUser implements CreatesNewUsers {
+      public function create(array $input): User { ... }
+  }
+  ```
+- Controllers remain thin, delegating to Actions when needed
 
 #### Authentication with Fortify
 - Configuration: [config/fortify.php](config/fortify.php)
@@ -111,11 +152,45 @@ import { cn } from '@/lib/utils';
 npm run lint          # ESLint with auto-fix
 npm run format        # Prettier format
 npm run format:check  # Check formatting without changes
-```
+``` (TDD Approach)
 
-#### ESLint Configuration ([eslint.config.js](eslint.config.js))
-- Vue 3 + TypeScript rules enabled
-- Ignores: `vendor/`, `node_modules/`, `public/`, `bootstrap/ssr/`, `resources/js/components/ui/*`
+#### Test Organization
+- Configuration: [tests/Pest.php](tests/Pest.php)
+- **Feature tests**: `tests/Feature/` - Full HTTP request/response cycle
+- **Unit tests**: `tests/Unit/` - Isolated logic testing
+- Subdirectories mirror app structure: `Feature/Auth/`, `Feature/Settings/`
+
+#### Pest Syntax Patterns
+- Use `test('description', function() { ... })` or `it('description', function() { ... })`
+- Arrange-Act-Assert pattern:
+  ```php
+  test('profile information can be updated', function () {
+      $user = User::factory()->create(); // Arrange
+      
+      $response = $this->actingAs($user) // Act
+          ->patch(route('profile.update'), ['name' => 'Test']);
+      
+      $response->assertSessionHasNoErrors(); // Assert
+      expect($user->refresh()->name)->toBe('Test');
+  });
+  ```
+- Use `expect()` API for fluent assertions: `expect($user->name)->toBe('Test')`
+
+#### Database Testing
+- Enable per-test: `uses(\Illuminate\Foundation\Testing\RefreshDatabase::class);`
+- Database refresh commented out globally by default in [tests/Pest.php](tests/Pest.php)
+- Use factories: `User::factory()->create()`
+
+#### Feature Test Examples
+- Route testing: `$this->get(route('dashboard'))->assertStatus(200)`
+- Authentication: `$this->actingAs($user)` before requests
+- Redirects: `$response->assertRedirect(route('login'))`
+- Session: `$response->assertSessionHasNoErrors()`
+
+#### Running Tests
+- All tests: `composer run test` or `php artisan test`
+- Specific file: `php artisan test tests/Feature/Auth/AuthenticationTest.php`
+- Filter by name: `php artisan test --filter=authenticationotstrap/ssr/`, `resources/js/components/ui/*`
 - Disabled rules: `vue/multi-word-component-names`, `@typescript-eslint/no-explicit-any`
 
 #### PHP Code Style
@@ -151,12 +226,97 @@ npm run format:check  # Check formatting without changes
 ### Environment Setup
 - Copy `.env.example` to `.env` if missing
 - Key generation: `php artisan key:generate`
-- Database setup: `php artisan migrate`
+- DWebRTC/PeerJS Integration
+
+### PeerJS Pattern
+- Install: `npm install peerjs` (if not already installed)
+- Sender-only configuration: Media streams sent to backend via Peer ID
+- Example connection pattern:
+  ```typescript
+  const peer = new Peer();
+  peer.on('open', (id) => {
+    const conn = peer.connect('receiver-peer-id');
+    const call = peer.call('receiver-peer-id', mediaStream);
+  });
+  ```
+
+### Data Channel API Commands
+The application communicates with the aiortc-rtmp backend via WebRTC data channels using JSON commands:
+
+#### Start Recording
+```typescript
+conn.send(JSON.stringify({ action: "start" }));
+// Response: { status: "ok", action: "start", urls: [...] }
+```
+
+#### Stop Recording
+```typescript
+conn.send(JSON.stringify({ action: "stop" }));
+```
+
+#### Add RTMP Destination
+```typescript
+conn.send(JSON.stringify({
+  action: "add_url",
+  url: "rtmp://a.rtmp.youtube.com/live2/YOUR_KEY"
+}));
+```
+
+#### Remove RTMP Destination
+```typescript
+conn.send(JSON.stringify({
+  action: "remove_url",
+  url: "rtmp://server.com/live/stream"
+}));
+```
+
+#### Get Status
+```typescript
+conn.send(JSON.stringify({ action: "status" }));
+// Response: { status: "ok", recording: true, urls: [...], tracks: 2 }
+```
+
+#### List URLs
+```typescript
+conn.send(JSON.stringify({ action: "list_urls" }));
+```
+
+### Multistreaming Pattern
+```typescript
+// Stream to multiple platforms simultaneously
+const platforms = [
+  "rtmp://a.rtmp.youtube.com/live2/YOUTUBE_KEY",
+  "rtmp://live.twitch.tv/app/TWITCH_KEY",
+  "rtmp://live-api-s.facebook.com:80/rtmp/FB_KEY"
+];
+
+platforms.forEach(url => {
+  conn.send(JSON.stringify({ action: "add_url", url }));
+});
+
+conn.send(JSON.stringify({ action: "start" }));
+```
+
+### Media Capture Pattern
+```typescript
+// Get user media (camera/microphone)
+const stream = await navigator.mediaDevices.getUserMedia({
+  video: { width: 1920, height: 1080 },
+  audio: true
+});
+
+// Send to backend
+const call = peer.call('receiver-peer-id', stream);
+```
 
 ## Anti-Patterns to Avoid
 
 - ❌ Don't manually edit files in `resources/js/components/ui/` (shadcn-vue managed)
 - ❌ Don't use inline styles; use Tailwind utility classes
 - ❌ Don't forget middleware on authenticated routes
+- ❌ Don't access `window` or `document` without SSR checks
+- ❌ Don't import Vue components without proper TypeScript types
+- ❌ Don't create bidirectional PeerJS connections (this is sender-only)
+- ❌ Don't forget to handle PeerJS connection errors and reconnection logic
 - ❌ Don't access `window` or `document` without SSR checks
 - ❌ Don't import Vue components without proper TypeScript types
