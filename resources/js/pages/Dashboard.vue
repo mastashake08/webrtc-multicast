@@ -46,6 +46,8 @@ const showConnectionDialog = ref(false);
 // Media
 const videoRef = ref<HTMLVideoElement | null>(null);
 const stream = ref<MediaStream | null>(null);
+const normalizedStream = ref<MediaStream | null>(null);
+const canvasRef = ref<HTMLCanvasElement | null>(null);
 const isStreaming = ref(false);
 const videoEnabled = ref(true);
 const audioEnabled = ref(true);
@@ -58,6 +60,11 @@ const videoDevices = ref<MediaDeviceInfo[]>([]);
 const audioDevices = ref<MediaDeviceInfo[]>([]);
 const editingUrlIndex = ref<number | null>(null);
 const editingUrlValue = ref('');
+
+// HD normalization constants
+const HD_WIDTH = 1920;
+const HD_HEIGHT = 1080;
+const TARGET_FPS = 30;
 
 // LocalStorage keys
 const STORAGE_KEYS = {
@@ -179,6 +186,85 @@ const loadDevices = async () => {
     }
 };
 
+const normalizeVideoToHD = (inputStream: MediaStream): MediaStream => {
+    console.log('[normalizeVideoToHD] Creating HD normalized stream');
+    
+    // Create canvas if not exists
+    if (!canvasRef.value) {
+        canvasRef.value = document.createElement('canvas');
+        canvasRef.value.width = HD_WIDTH;
+        canvasRef.value.height = HD_HEIGHT;
+    }
+    
+    const canvas = canvasRef.value;
+    const ctx = canvas.getContext('2d', { alpha: false });
+    
+    if (!ctx) {
+        console.error('[normalizeVideoToHD] Failed to get canvas context');
+        return inputStream;
+    }
+    
+    // Create video element to draw from
+    const video = document.createElement('video');
+    video.srcObject = inputStream;
+    video.autoplay = true;
+    video.playsInline = true;
+    video.muted = true;
+    
+    // Start drawing frames
+    let animationId: number;
+    const drawFrame = () => {
+        if (video.readyState >= video.HAVE_CURRENT_DATA) {
+            // Calculate aspect ratio scaling
+            const videoAspect = video.videoWidth / video.videoHeight;
+            const canvasAspect = HD_WIDTH / HD_HEIGHT;
+            
+            let drawWidth = HD_WIDTH;
+            let drawHeight = HD_HEIGHT;
+            let offsetX = 0;
+            let offsetY = 0;
+            
+            if (videoAspect > canvasAspect) {
+                // Video is wider - fit height
+                drawHeight = HD_HEIGHT;
+                drawWidth = HD_HEIGHT * videoAspect;
+                offsetX = (HD_WIDTH - drawWidth) / 2;
+            } else {
+                // Video is taller - fit width
+                drawWidth = HD_WIDTH;
+                drawHeight = HD_WIDTH / videoAspect;
+                offsetY = (HD_HEIGHT - drawHeight) / 2;
+            }
+            
+            // Clear and draw
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, HD_WIDTH, HD_HEIGHT);
+            ctx.drawImage(video, offsetX, offsetY, drawWidth, drawHeight);
+        }
+        animationId = requestAnimationFrame(drawFrame);
+    };
+    
+    video.onloadedmetadata = () => {
+        console.log(`[normalizeVideoToHD] Input: ${video.videoWidth}x${video.videoHeight} → Output: ${HD_WIDTH}x${HD_HEIGHT}`);
+        drawFrame();
+    };
+    
+    // Capture canvas stream at target FPS
+    const canvasStream = canvas.captureStream(TARGET_FPS);
+    
+    // Add audio from original stream
+    const audioTracks = inputStream.getAudioTracks();
+    audioTracks.forEach(track => canvasStream.addTrack(track));
+    
+    // Stop animation when stream ends
+    canvasStream.getVideoTracks()[0].addEventListener('ended', () => {
+        cancelAnimationFrame(animationId);
+        video.srcObject = null;
+    });
+    
+    return canvasStream;
+};
+
 const startStream = async () => {
     try {
         const constraints: MediaStreamConstraints = {
@@ -205,14 +291,18 @@ const startStream = async () => {
             videoRef.value.srcObject = stream.value;
         }
 
+        // Normalize video to HD before sending
+        normalizedStream.value = normalizeVideoToHD(stream.value);
+        console.log('[startStream] Created HD normalized stream');
+
         // Send or replace media stream to receiver if connected
         if (isConnected.value) {
             if (receiverPeerId.value) {
                 // Check if we already have an active connection by trying to replace tracks
-                const replaced = await replaceMediaStream(stream.value);
+                const replaced = await replaceMediaStream(normalizedStream.value);
                 // If replace failed (no connection), create new connection
                 if (!replaced) {
-                    sendMediaStream(stream.value, receiverPeerId.value);
+                    sendMediaStream(normalizedStream.value, receiverPeerId.value);
                 }
             }
         }
@@ -272,10 +362,14 @@ const captureScreen = async () => {
             videoRef.value.srcObject = stream.value;
         }
 
+        // Normalize screen capture to HD before sending
+        normalizedStream.value = normalizeVideoToHD(stream.value);
+        console.log('[captureScreen] Created HD normalized screen stream');
+
         // Replace tracks on existing connection if connected
         if (isConnected.value) {
             console.log('[Dashboard] Replacing tracks with screen capture');
-            await replaceMediaStream(stream.value);
+            await replaceMediaStream(normalizedStream.value);
         }
     } catch (error) {
         console.error('Error capturing screen:', error);
