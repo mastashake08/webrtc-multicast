@@ -3,6 +3,13 @@
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
+        
+        {{-- PWA Meta Tags --}}
+        <meta name="theme-color" content="#ffffff">
+        <meta name="apple-mobile-web-app-capable" content="yes">
+        <meta name="apple-mobile-web-app-status-bar-style" content="default">
+        <meta name="apple-mobile-web-app-title" content="{{ config('app.name', 'WebRTC Multicast') }}">
+        <link rel="manifest" href="/manifest.webmanifest">
 
         {{-- Inline script to detect system dark mode preference and apply it immediately --}}
         <script>

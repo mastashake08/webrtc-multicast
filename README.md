@@ -13,6 +13,7 @@ Professional Laravel + Vue 3 web application for multicast streaming via WebRTC.
 - **Screen Capture**: Switch between camera and screen sharing on-the-fly
 - **Live Preview**: Real-time video preview with controls
 - **Device Selection**: Choose camera and microphone
+- **Progressive Web App (PWA)**: Installable with offline support
 
 ### UI/UX
 - **Modern Design**: shadcn-vue components with Tailwind CSS v4
@@ -78,6 +79,10 @@ php artisan key:generate
 
 # Run database migrations
 php artisan migrate
+
+# Generate PWA icons (optional but recommended)
+./generate-pwa-icons.sh
+# Or manually add pwa-192x192.png and pwa-512x512.png to public/
 
 # Build frontend assets
 npm run build
@@ -350,6 +355,14 @@ Ensure Node.js version is 20.19+ or 22.12+. Check with: `node --version`
 
 ### Sail Port Conflicts
 Edit `.env` and change `APP_PORT`, `VITE_PORT`, or `DB_PORT` if in use.
+
+### PWA Not Installing
+Ensure PWA icons exist. See [PWA Setup Guide](PWA_SETUP.md) for details.
+
+## Documentation
+
+- **[PWA Setup Guide](PWA_SETUP.md)** - Progressive Web App configuration and features
+- **[PWA Icon Guide](public/PWA_ICONS_README.md)** - Generate required PWA icons
 
 ## Contributing
 
