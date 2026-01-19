@@ -71,7 +71,7 @@ const recordingDuration = ref('00:00');
 // Screen sharing with PiP camera
 const isScreenSharing = ref(false);
 const cameraStream = ref<MediaStream | null>(null);
-const pipVideoRef = ref<HTMLVideoElement | null>(null);
+const cameraVideoElement = ref<HTMLVideoElement | null>(null);
 
 // HD normalization constants
 const HD_WIDTH = 1920;
@@ -223,8 +223,8 @@ const loadDevices = async () => {
     }
 };
 
-const normalizeVideoToHD = (inputStream: MediaStream): MediaStream => {
-    console.log('[normalizeVideoToHD] Creating HD normalized stream');
+const normalizeVideoToHD = (inputStream: MediaStream, cameraOverlay?: MediaStream): MediaStream => {
+    console.log('[normalizeVideoToHD] Creating HD normalized stream', { hasCameraOverlay: !!cameraOverlay });
     
     // Create canvas if not exists
     if (!canvasRef.value) {
@@ -241,18 +241,34 @@ const normalizeVideoToHD = (inputStream: MediaStream): MediaStream => {
         return inputStream;
     }
     
-    // Create video element to draw from
+    // Create video element to draw from (main screen/camera)
     const video = document.createElement('video');
     video.srcObject = inputStream;
     video.autoplay = true;
     video.playsInline = true;
     video.muted = true;
     
+    // Create camera overlay video element if provided
+    let cameraVideo: HTMLVideoElement | null = null;
+    if (cameraOverlay) {
+        cameraVideo = document.createElement('video');
+        cameraVideo.srcObject = cameraOverlay;
+        cameraVideo.autoplay = true;
+        cameraVideo.playsInline = true;
+        cameraVideo.muted = true;
+        cameraVideoElement.value = cameraVideo;
+    }
+    
+    // Camera overlay dimensions (in lower left corner)
+    const CAMERA_WIDTH = 320;  // Width of camera overlay
+    const CAMERA_HEIGHT = 180; // Height of camera overlay (16:9)
+    const CAMERA_MARGIN = 20;  // Margin from edges
+    
     // Start drawing frames
     let animationId: number;
     const drawFrame = () => {
         if (video.readyState >= video.HAVE_CURRENT_DATA) {
-            // Calculate aspect ratio scaling
+            // Calculate aspect ratio scaling for main video
             const videoAspect = video.videoWidth / video.videoHeight;
             const canvasAspect = HD_WIDTH / HD_HEIGHT;
             
@@ -273,10 +289,31 @@ const normalizeVideoToHD = (inputStream: MediaStream): MediaStream => {
                 offsetY = (HD_HEIGHT - drawHeight) / 2;
             }
             
-            // Clear and draw
+            // Clear and draw main video
             ctx.fillStyle = '#000000';
             ctx.fillRect(0, 0, HD_WIDTH, HD_HEIGHT);
             ctx.drawImage(video, offsetX, offsetY, drawWidth, drawHeight);
+            
+            // Draw camera overlay in lower left corner if available
+            if (cameraVideo && cameraVideo.readyState >= cameraVideo.HAVE_CURRENT_DATA) {
+                // Draw border/background
+                ctx.fillStyle = '#FFFFFF';
+                ctx.fillRect(
+                    CAMERA_MARGIN - 3,
+                    HD_HEIGHT - CAMERA_HEIGHT - CAMERA_MARGIN - 3,
+                    CAMERA_WIDTH + 6,
+                    CAMERA_HEIGHT + 6
+                );
+                
+                // Draw camera feed
+                ctx.drawImage(
+                    cameraVideo,
+                    CAMERA_MARGIN,
+                    HD_HEIGHT - CAMERA_HEIGHT - CAMERA_MARGIN,
+                    CAMERA_WIDTH,
+                    CAMERA_HEIGHT
+                );
+            }
         }
         animationId = requestAnimationFrame(drawFrame);
     };
@@ -629,27 +666,93 @@ const downloadRecording = () => {
 
 const captureScreenWithCamera = async () => {
     try {
-        // Save current camera stream for PiP
-        if (stream.value && !isScreenSharing.value) {
+        // Get camera stream first if we don't have one
+        if (!stream.value || isScreenSharing.value) {
+            // Start camera stream
+            const cameraConstraints: MediaStreamConstraints = {
+                video: videoEnabled.value ? {
+                    deviceId: selectedVideoDevice.value ? { exact: selectedVideoDevice.value } : undefined,
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 },
+                    frameRate: { ideal: 30 },
+                    aspectRatio: { ideal: 16/9 }
+                } : false,
+                audio: audioEnabled.value ? {
+                    deviceId: selectedAudioDevice.value ? { exact: selectedAudioDevice.value } : undefined,
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true,
+                    sampleRate: { ideal: 48000 },
+                    channelCount: { ideal: 2 }
+                } : false
+            };
+            cameraStream.value = await navigator.mediaDevices.getUserMedia(cameraConstraints);
+        } else {
+            // Save current camera stream
             cameraStream.value = stream.value.clone();
-            if (pipVideoRef.value) {
-                pipVideoRef.value.srcObject = cameraStream.value;
-            }
         }
         
-        // Capture screen
-        await captureScreen();
+        // Get screen share stream
+        // @ts-ignore - displayMedia is not in TypeScript types yet
+        const screenStream = await navigator.mediaDevices.getDisplayMedia({
+            video: {
+                width: { ideal: 3840 },
+                height: { ideal: 2160 },
+                frameRate: { ideal: 60 },
+                // @ts-ignore - cursor property
+                cursor: 'always'
+            },
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+                sampleRate: { ideal: 48000 },
+                channelCount: { ideal: 2 }
+            }
+        });
+        
+        // Stop old stream if exists
+        if (stream.value && !isScreenSharing.value) {
+            stream.value.getTracks().forEach(track => track.stop());
+        }
+        
+        stream.value = screenStream;
         isScreenSharing.value = true;
+        
+        if (videoRef.value) {
+            videoRef.value.srcObject = screenStream;
+        }
+        
+        // Create composite stream with camera overlay
+        normalizedStream.value = normalizeVideoToHD(screenStream, cameraStream.value);
+        console.log('[captureScreenWithCamera] Created composite stream with camera overlay');
+        
+        // Replace tracks on existing connection if connected
+        if (isConnected.value) {
+            console.log('[Dashboard] Replacing tracks with screen+camera composite');
+            await replaceMediaStream(normalizedStream.value);
+        }
     } catch (error) {
         console.error('Error capturing screen with camera:', error);
+        // Clean up camera stream on error
+        if (cameraStream.value) {
+            cameraStream.value.getTracks().forEach(track => track.stop());
+            cameraStream.value = null;
+        }
     }
 };
 
 const stopScreenShare = async () => {
-    // Stop PiP camera
+    // Stop camera overlay stream
     if (cameraStream.value) {
         cameraStream.value.getTracks().forEach(track => track.stop());
         cameraStream.value = null;
+    }
+    
+    // Clean up camera video element
+    if (cameraVideoElement.value) {
+        cameraVideoElement.value.srcObject = null;
+        cameraVideoElement.value = null;
     }
     
     // Return to regular camera
@@ -740,20 +843,6 @@ const stopScreenShare = async () => {
                                     class="h-full w-full object-contain"
                                 />
                                 
-                                <!-- Picture-in-Picture camera overlay when screen sharing -->
-                                <div 
-                                    v-if="isScreenSharing && cameraStream"
-                                    class="absolute bottom-4 left-4 w-48 overflow-hidden rounded-lg border-2 border-white shadow-lg"
-                                >
-                                    <video
-                                        ref="pipVideoRef"
-                                        autoplay
-                                        playsinline
-                                        muted
-                                        class="h-full w-full object-cover"
-                                    />
-                                </div>
-                                
                                 <!-- Recording indicator -->
                                 <div 
                                     v-if="isRecording"
@@ -761,6 +850,15 @@ const stopScreenShare = async () => {
                                 >
                                     <Circle class="h-3 w-3 fill-current animate-pulse" />
                                     REC {{ recordingDuration }}
+                                </div>
+                                
+                                <!-- Camera overlay indicator when screen sharing -->
+                                <div 
+                                    v-if="isScreenSharing && cameraStream"
+                                    class="absolute top-4 right-4 flex items-center gap-2 rounded-full bg-green-600 px-3 py-1.5 text-sm font-medium text-white"
+                                >
+                                    <Video class="h-3 w-3" />
+                                    Camera Overlay Active
                                 </div>
                                 
                                 <!-- Overlay controls -->
