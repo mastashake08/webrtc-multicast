@@ -223,6 +223,116 @@ const loadDevices = async () => {
     }
 };
 
+const createCompositeStream = (screenStream: MediaStream, cameraOverlayStream: MediaStream): MediaStream => {
+    console.log('[createCompositeStream] Creating composite for recording');
+    
+    // Create a new canvas for recording composite
+    const recordCanvas = document.createElement('canvas');
+    recordCanvas.width = HD_WIDTH;
+    recordCanvas.height = HD_HEIGHT;
+    const recordCtx = recordCanvas.getContext('2d', { alpha: false });
+    
+    if (!recordCtx) {
+        console.error('[createCompositeStream] Failed to get context');
+        return screenStream;
+    }
+    
+    // Create video elements
+    const screenVideo = document.createElement('video');
+    screenVideo.srcObject = screenStream;
+    screenVideo.autoplay = true;
+    screenVideo.playsInline = true;
+    screenVideo.muted = true;
+    
+    const cameraVideo = document.createElement('video');
+    cameraVideo.srcObject = cameraOverlayStream;
+    cameraVideo.autoplay = true;
+    cameraVideo.playsInline = true;
+    cameraVideo.muted = true;
+    
+    // Camera overlay dimensions
+    const CAMERA_WIDTH = 320;
+    const CAMERA_HEIGHT = 180;
+    const CAMERA_MARGIN = 20;
+    
+    let isDrawing = false;
+    
+    const drawComposite = () => {
+        if (!isDrawing) return;
+        
+        // Draw screen
+        if (screenVideo.readyState >= screenVideo.HAVE_CURRENT_DATA && screenVideo.videoWidth > 0) {
+            const videoAspect = screenVideo.videoWidth / screenVideo.videoHeight;
+            const canvasAspect = HD_WIDTH / HD_HEIGHT;
+            
+            let drawWidth = HD_WIDTH;
+            let drawHeight = HD_HEIGHT;
+            let offsetX = 0;
+            let offsetY = 0;
+            
+            if (videoAspect > canvasAspect) {
+                drawHeight = HD_HEIGHT;
+                drawWidth = HD_HEIGHT * videoAspect;
+                offsetX = (HD_WIDTH - drawWidth) / 2;
+            } else {
+                drawWidth = HD_WIDTH;
+                drawHeight = HD_WIDTH / videoAspect;
+                offsetY = (HD_HEIGHT - drawHeight) / 2;
+            }
+            
+            recordCtx.fillStyle = '#000000';
+            recordCtx.fillRect(0, 0, HD_WIDTH, HD_HEIGHT);
+            recordCtx.drawImage(screenVideo, offsetX, offsetY, drawWidth, drawHeight);
+            
+            // Draw camera overlay
+            if (cameraVideo.readyState >= cameraVideo.HAVE_CURRENT_DATA && cameraVideo.videoWidth > 0) {
+                recordCtx.fillStyle = '#FFFFFF';
+                recordCtx.fillRect(
+                    CAMERA_MARGIN - 3,
+                    HD_HEIGHT - CAMERA_HEIGHT - CAMERA_MARGIN - 3,
+                    CAMERA_WIDTH + 6,
+                    CAMERA_HEIGHT + 6
+                );
+                recordCtx.drawImage(
+                    cameraVideo,
+                    CAMERA_MARGIN,
+                    HD_HEIGHT - CAMERA_HEIGHT - CAMERA_MARGIN,
+                    CAMERA_WIDTH,
+                    CAMERA_HEIGHT
+                );
+            }
+        }
+        
+        requestAnimationFrame(drawComposite);
+    };
+    
+    // Wait for both videos to be ready
+    Promise.all([
+        new Promise(resolve => {
+            if (screenVideo.readyState >= screenVideo.HAVE_CURRENT_DATA) resolve(true);
+            else screenVideo.addEventListener('loadeddata', () => resolve(true), { once: true });
+        }),
+        new Promise(resolve => {
+            if (cameraVideo.readyState >= cameraVideo.HAVE_CURRENT_DATA) resolve(true);
+            else cameraVideo.addEventListener('loadeddata', () => resolve(true), { once: true });
+        })
+    ]).then(() => {
+        console.log('[createCompositeStream] Both videos ready, starting composite');
+        isDrawing = true;
+        drawComposite();
+    });
+    
+    // Create stream from canvas
+    const compositeStream = recordCanvas.captureStream(30);
+    
+    // Add audio from screen stream
+    const audioTracks = screenStream.getAudioTracks();
+    audioTracks.forEach(track => compositeStream.addTrack(track));
+    
+    console.log('[createCompositeStream] Composite stream created');
+    return compositeStream;
+};
+
 const normalizeVideoToHD = (inputStream: MediaStream, cameraOverlay?: MediaStream): MediaStream => {
     console.log('[normalizeVideoToHD] Creating HD normalized stream', { hasCameraOverlay: !!cameraOverlay });
     
@@ -632,8 +742,18 @@ const startLocalRecording = () => {
     try {
         recordedChunks.value = [];
         
-        // Record the normalized canvas stream if available, otherwise record original stream
-        const streamToRecord = normalizedStream.value || stream.value;
+        // For local recording, use the original stream or create a composite if screen sharing with camera
+        let streamToRecord: MediaStream;
+        
+        if (isScreenSharing.value && cameraStream.value) {
+            // Create a composite stream with screen + camera overlay for recording
+            console.log('[startLocalRecording] Creating composite stream for screen share with camera');
+            streamToRecord = createCompositeStream(stream.value, cameraStream.value);
+        } else {
+            // Use original stream directly - better compatibility with MediaRecorder
+            console.log('[startLocalRecording] Using original stream');
+            streamToRecord = stream.value;
+        }
         
         // Verify the stream has active tracks
         const videoTracks = streamToRecord.getVideoTracks();
@@ -644,7 +764,8 @@ const startLocalRecording = () => {
             hasAudio: audioTracks.length > 0,
             videoEnabled: videoTracks[0]?.enabled,
             videoReadyState: videoTracks[0]?.readyState,
-            isNormalized: !!normalizedStream.value
+            videoSettings: videoTracks[0]?.getSettings(),
+            isScreenShare: isScreenSharing.value
         });
         
         if (videoTracks.length === 0) {
