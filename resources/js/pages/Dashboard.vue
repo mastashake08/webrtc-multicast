@@ -742,18 +742,8 @@ const startLocalRecording = () => {
     try {
         recordedChunks.value = [];
         
-        // For local recording, use the original stream or create a composite if screen sharing with camera
-        let streamToRecord: MediaStream;
-        
-        if (isScreenSharing.value && cameraStream.value) {
-            // Create a composite stream with screen + camera overlay for recording
-            console.log('[startLocalRecording] Creating composite stream for screen share with camera');
-            streamToRecord = createCompositeStream(stream.value, cameraStream.value);
-        } else {
-            // Use original stream directly - better compatibility with MediaRecorder
-            console.log('[startLocalRecording] Using original stream');
-            streamToRecord = stream.value;
-        }
+        // Always use the original stream for local recording - simpler and more reliable
+        const streamToRecord = stream.value;
         
         // Verify the stream has active tracks
         const videoTracks = streamToRecord.getVideoTracks();
@@ -910,14 +900,23 @@ const captureScreenWithCamera = async () => {
                 // @ts-ignore - cursor property
                 cursor: 'always'
             },
-            audio: {
-                echoCancellation: true,
-                noiseSuppression: true,
-                autoGainControl: true,
-                sampleRate: { ideal: 48000 },
-                channelCount: { ideal: 2 }
-            }
+            audio: true  // Request system audio if available
         });
+        
+        console.log('[captureScreenWithCamera] Screen stream tracks:', screenStream.getTracks().map(t => ({
+            kind: t.kind,
+            label: t.label,
+            enabled: t.enabled
+        })));
+        
+        // If screen doesn't have audio, add microphone audio from camera stream
+        if (screenStream.getAudioTracks().length === 0 && cameraStream.value) {
+            const micAudioTracks = cameraStream.value.getAudioTracks();
+            if (micAudioTracks.length > 0) {
+                screenStream.addTrack(micAudioTracks[0]);
+                console.log('[captureScreenWithCamera] Added microphone audio to screen stream');
+            }
+        }
         
         // Stop old stream if exists
         if (stream.value && !isScreenSharing.value) {
