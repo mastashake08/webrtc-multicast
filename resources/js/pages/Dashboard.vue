@@ -12,8 +12,8 @@ import { usePeerJS } from '@/composables/usePeerJS';
 import { dashboard } from '@/routes';
 import { type BreadcrumbItem } from '@/types';
 import { Head } from '@inertiajs/vue3';
-import { Video, VideoOff, Mic, MicOff, Monitor, Trash2, Plus, Play, Square, Link as LinkIcon, AlertCircle, Edit2, Check, X } from 'lucide-vue-next';
-import { ref, onMounted, onUnmounted, watch } from 'vue';
+import { Video, VideoOff, Mic, MicOff, Monitor, Trash2, Plus, Play, Square, Link as LinkIcon, AlertCircle, Edit2, Check, X, Download, Circle } from 'lucide-vue-next';
+import { ref, onMounted, onUnmounted, watch, computed } from 'vue';
 
 const breadcrumbs: BreadcrumbItem[] = [
     {
@@ -60,6 +60,18 @@ const videoDevices = ref<MediaDeviceInfo[]>([]);
 const audioDevices = ref<MediaDeviceInfo[]>([]);
 const editingUrlIndex = ref<number | null>(null);
 const editingUrlValue = ref('');
+
+// Local recording
+const isRecording = ref(false);
+const mediaRecorder = ref<MediaRecorder | null>(null);
+const recordedChunks = ref<Blob[]>([]);
+const recordingStartTime = ref<number>(0);
+const recordingDuration = ref('00:00');
+
+// Screen sharing with PiP camera
+const isScreenSharing = ref(false);
+const cameraStream = ref<MediaStream | null>(null);
+const pipVideoRef = ref<HTMLVideoElement | null>(null);
 
 // HD normalization constants
 const HD_WIDTH = 1920;
@@ -153,6 +165,17 @@ watch(receiverPeerId, () => {
     }
 });
 
+// Update recording duration display
+const updateRecordingDuration = () => {
+    if (isRecording.value) {
+        const elapsed = Math.floor((Date.now() - recordingStartTime.value) / 1000);
+        const minutes = Math.floor(elapsed / 60).toString().padStart(2, '0');
+        const seconds = (elapsed % 60).toString().padStart(2, '0');
+        recordingDuration.value = `${minutes}:${seconds}`;
+        requestAnimationFrame(updateRecordingDuration);
+    }
+};
+
 // Watch for connection status
 watch(isConnected, (connected) => {
     if (connected) {
@@ -171,14 +194,28 @@ watch(lastStatus, (status) => {
 
 const loadDevices = async () => {
     try {
+        // Request permissions first to get proper device labels
+        await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+            .then(stream => {
+                // Stop tracks immediately - we just needed permission
+                stream.getTracks().forEach(track => track.stop());
+            })
+            .catch(() => {
+                console.warn('Could not get permissions for full device labels');
+            });
+        
+        // Now enumerate devices with proper labels
         const devices = await navigator.mediaDevices.enumerateDevices();
         videoDevices.value = devices.filter(d => d.kind === 'videoinput');
         audioDevices.value = devices.filter(d => d.kind === 'audioinput');
         
-        if (videoDevices.value.length > 0) {
+        console.log('Available cameras:', videoDevices.value.map(d => ({ id: d.deviceId.slice(0, 8), label: d.label })));
+        console.log('Available microphones:', audioDevices.value.map(d => ({ id: d.deviceId.slice(0, 8), label: d.label })));
+        
+        if (videoDevices.value.length > 0 && !selectedVideoDevice.value) {
             selectedVideoDevice.value = videoDevices.value[0].deviceId;
         }
-        if (audioDevices.value.length > 0) {
+        if (audioDevices.value.length > 0 && !selectedAudioDevice.value) {
             selectedAudioDevice.value = audioDevices.value[0].deviceId;
         }
     } catch (error) {
@@ -286,6 +323,7 @@ const startStream = async () => {
         };
 
         stream.value = await navigator.mediaDevices.getUserMedia(constraints);
+        isScreenSharing.value = false;
         
         if (videoRef.value) {
             videoRef.value.srcObject = stream.value;
@@ -347,6 +385,7 @@ const captureScreen = async () => {
                 width: { ideal: 3840 },                 // 4K ideal
                 height: { ideal: 2160 },                // 4K ideal
                 frameRate: { ideal: 60 },               // 60fps ideal
+                // @ts-ignore - cursor property
                 cursor: 'always'                        // Always show cursor
             },
             audio: {
@@ -517,6 +556,107 @@ const changeAudioDevice = async () => {
         await startStream();
     }
 };
+
+const startLocalRecording = () => {
+    if (!normalizedStream.value) {
+        alert('Please start camera or screen share first');
+        return;
+    }
+
+    try {
+        recordedChunks.value = [];
+        
+        const options: MediaRecorderOptions = {
+            mimeType: 'video/webm;codecs=vp9,opus',
+            videoBitsPerSecond: 8000000 // 8 Mbps
+        };
+        
+        // Fallback to vp8 if vp9 not supported
+        if (!MediaRecorder.isTypeSupported(options.mimeType!)) {
+            options.mimeType = 'video/webm;codecs=vp8,opus';
+        }
+        
+        mediaRecorder.value = new MediaRecorder(normalizedStream.value, options);
+        
+        mediaRecorder.value.ondataavailable = (event) => {
+            if (event.data.size > 0) {
+                recordedChunks.value.push(event.data);
+            }
+        };
+        
+        mediaRecorder.value.onstop = () => {
+            console.log('Recording stopped, chunks:', recordedChunks.value.length);
+        };
+        
+        mediaRecorder.value.start(1000); // Collect data every second
+        isRecording.value = true;
+        recordingStartTime.value = Date.now();
+        updateRecordingDuration();
+        
+        console.log('Started local recording');
+    } catch (error) {
+        console.error('Error starting recording:', error);
+        alert('Failed to start recording. Your browser may not support this feature.');
+    }
+};
+
+const stopLocalRecording = () => {
+    if (mediaRecorder.value && isRecording.value) {
+        mediaRecorder.value.stop();
+        isRecording.value = false;
+        console.log('Stopped local recording');
+    }
+};
+
+const downloadRecording = () => {
+    if (recordedChunks.value.length === 0) {
+        alert('No recording to download');
+        return;
+    }
+    
+    const blob = new Blob(recordedChunks.value, { type: 'video/webm' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `recording-${new Date().toISOString()}.webm`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    
+    console.log('Downloaded recording');
+};
+
+const captureScreenWithCamera = async () => {
+    try {
+        // Save current camera stream for PiP
+        if (stream.value && !isScreenSharing.value) {
+            cameraStream.value = stream.value.clone();
+            if (pipVideoRef.value) {
+                pipVideoRef.value.srcObject = cameraStream.value;
+            }
+        }
+        
+        // Capture screen
+        await captureScreen();
+        isScreenSharing.value = true;
+    } catch (error) {
+        console.error('Error capturing screen with camera:', error);
+    }
+};
+
+const stopScreenShare = async () => {
+    // Stop PiP camera
+    if (cameraStream.value) {
+        cameraStream.value.getTracks().forEach(track => track.stop());
+        cameraStream.value = null;
+    }
+    
+    // Return to regular camera
+    isScreenSharing.value = false;
+    stopStream();
+    await startStream();
+};
 </script>
 
 <template>
@@ -600,6 +740,29 @@ const changeAudioDevice = async () => {
                                     class="h-full w-full object-contain"
                                 />
                                 
+                                <!-- Picture-in-Picture camera overlay when screen sharing -->
+                                <div 
+                                    v-if="isScreenSharing && cameraStream"
+                                    class="absolute bottom-4 left-4 w-48 overflow-hidden rounded-lg border-2 border-white shadow-lg"
+                                >
+                                    <video
+                                        ref="pipVideoRef"
+                                        autoplay
+                                        playsinline
+                                        muted
+                                        class="h-full w-full object-cover"
+                                    />
+                                </div>
+                                
+                                <!-- Recording indicator -->
+                                <div 
+                                    v-if="isRecording"
+                                    class="absolute top-4 left-4 flex items-center gap-2 rounded-full bg-red-600 px-3 py-1.5 text-sm font-medium text-white"
+                                >
+                                    <Circle class="h-3 w-3 fill-current animate-pulse" />
+                                    REC {{ recordingDuration }}
+                                </div>
+                                
                                 <!-- Overlay controls -->
                                 <div class="absolute bottom-4 left-1/2 flex -translate-x-1/2 gap-2">
                                     <Button
@@ -629,11 +792,22 @@ const changeAudioDevice = async () => {
                                             <Mic v-else class="h-4 w-4" />
                                         </Button>
                                         <Button
-                                            @click="captureScreen"
+                                            v-if="!isScreenSharing"
+                                            @click="captureScreenWithCamera"
                                             variant="secondary"
                                             size="sm"
+                                            title="Screen share with camera PiP"
                                         >
                                             <Monitor class="h-4 w-4" />
+                                        </Button>
+                                        <Button
+                                            v-else
+                                            @click="stopScreenShare"
+                                            variant="secondary"
+                                            size="sm"
+                                            title="Back to camera"
+                                        >
+                                            <Video class="h-4 w-4" />
                                         </Button>
                                     </template>
                                 </div>
@@ -764,51 +938,98 @@ const changeAudioDevice = async () => {
             </div>
 
             <!-- Camera and Microphone Settings -->
-            <Card>
-                <CardHeader>
-                    <CardTitle>Device Settings</CardTitle>
-                    <CardDescription>Configure your camera and microphone</CardDescription>
-                </CardHeader>
-                <CardContent>
-                    <div class="grid gap-4 md:grid-cols-2">
-                        <div class="space-y-2">
-                            <Label for="video-device">Camera</Label>
-                            <select
-                                id="video-device"
-                                v-model="selectedVideoDevice"
-                                @change="changeVideoDevice"
-                                class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-base shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
-                            >
-                                <option
-                                    v-for="device in videoDevices"
-                                    :key="device.deviceId"
-                                    :value="device.deviceId"
+            <div class="grid gap-4 lg:grid-cols-2">
+                <!-- Device Settings -->
+                <Card>
+                    <CardHeader>
+                        <CardTitle>Device Settings</CardTitle>
+                        <CardDescription>Configure your camera and microphone</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                        <div class="grid gap-4 md:grid-cols-2">
+                            <div class="space-y-2">
+                                <Label for="video-device">Camera</Label>
+                                <select
+                                    id="video-device"
+                                    v-model="selectedVideoDevice"
+                                    @change="changeVideoDevice"
+                                    class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-base shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
                                 >
-                                    {{ device.label || `Camera ${device.deviceId.slice(0, 8)}` }}
-                                </option>
-                            </select>
-                        </div>
+                                    <option
+                                        v-for="device in videoDevices"
+                                        :key="device.deviceId"
+                                        :value="device.deviceId"
+                                    >
+                                        {{ device.label || `Camera ${device.deviceId.slice(0, 8)}` }}
+                                    </option>
+                                </select>
+                            </div>
 
-                        <div class="space-y-2">
-                            <Label for="audio-device">Microphone</Label>
-                            <select
-                                id="audio-device"
-                                v-model="selectedAudioDevice"
-                                @change="changeAudioDevice"
-                                class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-base shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
-                            >
-                                <option
-                                    v-for="device in audioDevices"
-                                    :key="device.deviceId"
-                                    :value="device.deviceId"
+                            <div class="space-y-2">
+                                <Label for="audio-device">Microphone</Label>
+                                <select
+                                    id="audio-device"
+                                    v-model="selectedAudioDevice"
+                                    @change="changeAudioDevice"
+                                    class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-base shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
                                 >
-                                    {{ device.label || `Microphone ${device.deviceId.slice(0, 8)}` }}
-                                </option>
-                            </select>
+                                    <option
+                                        v-for="device in audioDevices"
+                                        :key="device.deviceId"
+                                        :value="device.deviceId"
+                                    >
+                                        {{ device.label || `Microphone ${device.deviceId.slice(0, 8)}` }}
+                                    </option>
+                                </select>
+                            </div>
                         </div>
-                    </div>
-                </CardContent>
-            </Card>
+                    </CardContent>
+                </Card>
+
+                <!-- Local Recording Controls -->
+                <Card>
+                    <CardHeader>
+                        <CardTitle>Local Recording</CardTitle>
+                        <CardDescription>Record locally and download video</CardDescription>
+                    </CardHeader>
+                    <CardContent class="space-y-4">
+                        <div class="flex items-center gap-2">
+                            <Button
+                                v-if="!isRecording"
+                                @click="startLocalRecording"
+                                :disabled="!stream"
+                                class="flex-1"
+                            >
+                                <Circle class="mr-2 h-4 w-4" />
+                                Start Recording
+                            </Button>
+                            <Button
+                                v-else
+                                @click="stopLocalRecording"
+                                variant="destructive"
+                                class="flex-1"
+                            >
+                                <Square class="mr-2 h-4 w-4" />
+                                Stop Recording
+                            </Button>
+                        </div>
+                        
+                        <Button
+                            v-if="recordedChunks.length > 0"
+                            @click="downloadRecording"
+                            variant="secondary"
+                            class="w-full"
+                        >
+                            <Download class="mr-2 h-4 w-4" />
+                            Download Recording ({{ Math.round(recordedChunks.reduce((acc, chunk) => acc + chunk.size, 0) / 1024 / 1024) }}MB)
+                        </Button>
+                        
+                        <p v-if="!stream" class="text-sm text-muted-foreground text-center">
+                            Start camera or screen share to enable recording
+                        </p>
+                    </CardContent>
+                </Card>
+            </div>
         </div>
     </AppLayout>
 </template>
