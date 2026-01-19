@@ -266,8 +266,14 @@ const normalizeVideoToHD = (inputStream: MediaStream, cameraOverlay?: MediaStrea
     
     // Start drawing frames
     let animationId: number;
+    let frameCount = 0;
     const drawFrame = () => {
-        if (video.readyState >= video.HAVE_CURRENT_DATA) {
+        if (video.readyState >= video.HAVE_CURRENT_DATA && video.videoWidth > 0) {
+            frameCount++;
+            if (frameCount <= 5) {
+                console.log('[normalizeVideoToHD] Drawing frame', frameCount, 'video:', video.videoWidth, 'x', video.videoHeight);
+            }
+            
             // Calculate aspect ratio scaling for main video
             const videoAspect = video.videoWidth / video.videoHeight;
             const canvasAspect = HD_WIDTH / HD_HEIGHT;
@@ -295,7 +301,7 @@ const normalizeVideoToHD = (inputStream: MediaStream, cameraOverlay?: MediaStrea
             ctx.drawImage(video, offsetX, offsetY, drawWidth, drawHeight);
             
             // Draw camera overlay in lower left corner if available
-            if (cameraVideo && cameraVideo.readyState >= cameraVideo.HAVE_CURRENT_DATA) {
+            if (cameraVideo && cameraVideo.readyState >= cameraVideo.HAVE_CURRENT_DATA && cameraVideo.videoWidth > 0) {
                 // Draw border/background
                 ctx.fillStyle = '#FFFFFF';
                 ctx.fillRect(
@@ -314,19 +320,29 @@ const normalizeVideoToHD = (inputStream: MediaStream, cameraOverlay?: MediaStrea
                     CAMERA_HEIGHT
                 );
             }
-        } else {
-            // If video not ready, fill with black
-            ctx.fillStyle = '#000000';
-            ctx.fillRect(0, 0, HD_WIDTH, HD_HEIGHT);
         }
         animationId = requestAnimationFrame(drawFrame);
     };
     
-    // Start drawing immediately
-    drawFrame();
+    // Wait for video to be ready and playing before starting
+    const startDrawing = () => {
+        console.log('[normalizeVideoToHD] Video ready, starting to draw. Video dimensions:', video.videoWidth, 'x', video.videoHeight);
+        drawFrame();
+    };
+    
+    // Listen for when video actually starts playing
+    video.addEventListener('playing', startDrawing, { once: true });
+    
+    // Fallback: start after a short delay if 'playing' event doesn't fire
+    setTimeout(() => {
+        if (animationId === undefined) {
+            console.log('[normalizeVideoToHD] Fallback: starting draw without playing event');
+            drawFrame();
+        }
+    }, 100);
     
     video.onloadedmetadata = () => {
-        console.log(`[normalizeVideoToHD] Input: ${video.videoWidth}x${video.videoHeight} → Output: ${HD_WIDTH}x${HD_HEIGHT}`);
+        console.log(`[normalizeVideoToHD] Metadata loaded. Input: ${video.videoWidth}x${video.videoHeight} → Output: ${HD_WIDTH}x${HD_HEIGHT}`);
     };
     
     // Capture canvas stream at target FPS
@@ -344,6 +360,9 @@ const normalizeVideoToHD = (inputStream: MediaStream, cameraOverlay?: MediaStrea
     canvasStream.getVideoTracks()[0].addEventListener('ended', () => {
         cancelAnimationFrame(animationId);
         video.srcObject = null;
+        if (cameraVideo) {
+            cameraVideo.srcObject = null;
+        }
     });
     
     return canvasStream;
