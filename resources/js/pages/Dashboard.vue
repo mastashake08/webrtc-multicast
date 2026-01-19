@@ -314,21 +314,31 @@ const normalizeVideoToHD = (inputStream: MediaStream, cameraOverlay?: MediaStrea
                     CAMERA_HEIGHT
                 );
             }
+        } else {
+            // If video not ready, fill with black
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, HD_WIDTH, HD_HEIGHT);
         }
         animationId = requestAnimationFrame(drawFrame);
     };
     
+    // Start drawing immediately
+    drawFrame();
+    
     video.onloadedmetadata = () => {
         console.log(`[normalizeVideoToHD] Input: ${video.videoWidth}x${video.videoHeight} → Output: ${HD_WIDTH}x${HD_HEIGHT}`);
-        drawFrame();
     };
     
     // Capture canvas stream at target FPS
     const canvasStream = canvas.captureStream(TARGET_FPS);
+    console.log('[normalizeVideoToHD] Canvas stream created, tracks:', canvasStream.getTracks().map(t => ({ kind: t.kind, enabled: t.enabled, readyState: t.readyState })));
     
     // Add audio from original stream
     const audioTracks = inputStream.getAudioTracks();
-    audioTracks.forEach(track => canvasStream.addTrack(track));
+    audioTracks.forEach(track => {
+        canvasStream.addTrack(track);
+        console.log('[normalizeVideoToHD] Added audio track:', track.label);
+    });
     
     // Stop animation when stream ends
     canvasStream.getVideoTracks()[0].addEventListener('ended', () => {
@@ -595,13 +605,33 @@ const changeAudioDevice = async () => {
 };
 
 const startLocalRecording = () => {
-    if (!normalizedStream.value) {
+    if (!stream.value) {
         alert('Please start camera or screen share first');
         return;
     }
 
     try {
         recordedChunks.value = [];
+        
+        // Record the normalized canvas stream if available, otherwise record original stream
+        const streamToRecord = normalizedStream.value || stream.value;
+        
+        // Verify the stream has active tracks
+        const videoTracks = streamToRecord.getVideoTracks();
+        const audioTracks = streamToRecord.getAudioTracks();
+        
+        console.log('[startLocalRecording] Stream info:', {
+            hasVideo: videoTracks.length > 0,
+            hasAudio: audioTracks.length > 0,
+            videoEnabled: videoTracks[0]?.enabled,
+            videoReadyState: videoTracks[0]?.readyState,
+            isNormalized: !!normalizedStream.value
+        });
+        
+        if (videoTracks.length === 0) {
+            alert('No video track available to record');
+            return;
+        }
         
         const options: MediaRecorderOptions = {
             mimeType: 'video/webm;codecs=vp9,opus',
@@ -611,18 +641,34 @@ const startLocalRecording = () => {
         // Fallback to vp8 if vp9 not supported
         if (!MediaRecorder.isTypeSupported(options.mimeType!)) {
             options.mimeType = 'video/webm;codecs=vp8,opus';
+            console.log('[startLocalRecording] Falling back to VP8');
         }
         
-        mediaRecorder.value = new MediaRecorder(normalizedStream.value, options);
+        // Additional fallback
+        if (!MediaRecorder.isTypeSupported(options.mimeType!)) {
+            options.mimeType = 'video/webm';
+            console.log('[startLocalRecording] Falling back to default webm');
+        }
+        
+        mediaRecorder.value = new MediaRecorder(streamToRecord, options);
         
         mediaRecorder.value.ondataavailable = (event) => {
             if (event.data.size > 0) {
                 recordedChunks.value.push(event.data);
+                console.log('[Recording] Chunk received:', event.data.size, 'bytes');
             }
         };
         
         mediaRecorder.value.onstop = () => {
-            console.log('Recording stopped, chunks:', recordedChunks.value.length);
+            console.log('[Recording] Stopped, total chunks:', recordedChunks.value.length);
+            const totalSize = recordedChunks.value.reduce((acc, chunk) => acc + chunk.size, 0);
+            console.log('[Recording] Total size:', totalSize, 'bytes');
+        };
+        
+        mediaRecorder.value.onerror = (event) => {
+            console.error('[Recording] Error:', event);
+            alert('Recording error occurred');
+            isRecording.value = false;
         };
         
         mediaRecorder.value.start(1000); // Collect data every second
@@ -630,7 +676,7 @@ const startLocalRecording = () => {
         recordingStartTime.value = Date.now();
         updateRecordingDuration();
         
-        console.log('Started local recording');
+        console.log('[startLocalRecording] Recording started with codec:', options.mimeType);
     } catch (error) {
         console.error('Error starting recording:', error);
         alert('Failed to start recording. Your browser may not support this feature.');
