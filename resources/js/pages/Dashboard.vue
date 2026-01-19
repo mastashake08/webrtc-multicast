@@ -926,13 +926,14 @@ const captureScreenWithCamera = async () => {
         stream.value = screenStream;
         isScreenSharing.value = true;
         
-        if (videoRef.value) {
-            videoRef.value.srcObject = screenStream;
-        }
-        
         // Create composite stream with camera overlay
         normalizedStream.value = normalizeVideoToHD(screenStream, cameraStream.value);
         console.log('[captureScreenWithCamera] Created composite stream with camera overlay');
+        
+        // Show the composited stream in the preview (so we can see the camera overlay)
+        if (videoRef.value) {
+            videoRef.value.srcObject = normalizedStream.value;
+        }
         
         // Replace tracks on existing connection if connected
         if (isConnected.value) {
