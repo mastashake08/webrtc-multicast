@@ -765,12 +765,24 @@ const startLocalRecording = () => {
             videoEnabled: videoTracks[0]?.enabled,
             videoReadyState: videoTracks[0]?.readyState,
             videoSettings: videoTracks[0]?.getSettings(),
-            isScreenShare: isScreenSharing.value
+            audioSettings: audioTracks[0]?.getSettings(),
+            isScreenShare: isScreenSharing.value,
+            allTracks: streamToRecord.getTracks().map(t => ({
+                kind: t.kind,
+                id: t.id.slice(0, 8),
+                enabled: t.enabled,
+                readyState: t.readyState,
+                label: t.label
+            }))
         });
         
         if (videoTracks.length === 0) {
             alert('No video track available to record');
             return;
+        }
+        
+        if (audioTracks.length === 0) {
+            console.warn('[startLocalRecording] No audio tracks available - recording video only');
         }
         
         const options: MediaRecorderOptions = {
@@ -791,6 +803,16 @@ const startLocalRecording = () => {
         }
         
         mediaRecorder.value = new MediaRecorder(streamToRecord, options);
+        
+        mediaRecorder.value.onstart = () => {
+            console.log('[Recording] Started');
+            console.log('[Recording] MediaRecorder stream tracks:', mediaRecorder.value!.stream.getTracks().map(t => ({
+                kind: t.kind,
+                enabled: t.enabled,
+                readyState: t.readyState,
+                muted: t.muted
+            })));
+        };
         
         mediaRecorder.value.ondataavailable = (event) => {
             if (event.data.size > 0) {
