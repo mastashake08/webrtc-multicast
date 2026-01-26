@@ -75,11 +75,10 @@ const cameraVideoElement = ref<HTMLVideoElement | null>(null);
 const pipVideoElement = ref<HTMLVideoElement | null>(null);
 const isPipActive = ref(false);
 
-// 4K canvas dimensions
-// captureStream downscales by factor of 3: 3840→1280, 2160→720 (both divisible by 16)
-// Results in perfect 720p streaming quality
-const HD_WIDTH = 3840;
-const HD_HEIGHT = 2160;
+// Canvas dimensions - 1920x1080 for reliable captureStream() output
+// captureStream() often downscales large canvases, so we use standard 1080p
+const HD_WIDTH = 1920;
+const HD_HEIGHT = 1080;
 const TARGET_FPS = 30;
 
 // LocalStorage keys
@@ -539,19 +538,13 @@ const normalizeVideoToHD = (inputStream: MediaStream, cameraOverlay?: MediaStrea
             width: settings.width,
             height: settings.height,
             frameRate: settings.frameRate,
-            expected: `${HD_WIDTH}x${HD_HEIGHT}`
+            canvasSize: `${HD_WIDTH}x${HD_HEIGHT}`,
+            downscaleFactor: `${(HD_WIDTH / settings.width!).toFixed(2)}x`
         });
         
-        // Apply constraints to ensure 1920x1080
-        videoTrack.applyConstraints({
-            width: { ideal: HD_WIDTH, exact: HD_WIDTH },
-            height: { ideal: HD_HEIGHT, exact: HD_HEIGHT },
-            frameRate: { ideal: TARGET_FPS }
-        }).then(() => {
-            console.log('[normalizeVideoToHD] Video track constraints applied successfully');
-        }).catch(err => {
-            console.warn('[normalizeVideoToHD] Could not apply exact constraints:', err);
-        });
+        // Note: applyConstraints doesn't work on canvas streams
+        // Browser automatically downscales based on performance
+        console.warn(`[normalizeVideoToHD] Browser downscaled ${HD_WIDTH}x${HD_HEIGHT} canvas to ${settings.width}x${settings.height}`);
     }
     
     console.log('[normalizeVideoToHD] Canvas stream created, tracks:', canvasStream.getTracks().map(t => ({ kind: t.kind, enabled: t.enabled, readyState: t.readyState })));
@@ -700,9 +693,9 @@ const captureScreen = async () => {
         // @ts-ignore - displayMedia is not in TypeScript types yet
         stream.value = await navigator.mediaDevices.getDisplayMedia({
             video: {
-                width: { ideal: 3840 },                 // 4K ideal
-                height: { ideal: 2160 },                // 4K ideal
-                frameRate: { ideal: 60 },               // 60fps ideal
+                width: { ideal: 1920, max: 1920 },      // Force 1080p
+                height: { ideal: 1080, max: 1080 },     // Force 1080p
+                frameRate: { ideal: 30, max: 30 },      // 30fps
                 // @ts-ignore - cursor property
                 cursor: 'always'                        // Always show cursor
             },
