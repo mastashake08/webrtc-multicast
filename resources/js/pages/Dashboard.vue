@@ -829,8 +829,11 @@ const startLocalRecording = () => {
     try {
         recordedChunks.value = [];
         
-        // Always use the original stream for local recording - simpler and more reliable
-        const streamToRecord = stream.value;
+        // Use the normalized stream if available (has camera overlay when screen sharing)
+        // Otherwise fall back to the original stream
+        const streamToRecord = normalizedStream.value || stream.value;
+        
+        console.log('[startLocalRecording] Using', normalizedStream.value ? 'normalized composite stream' : 'original stream');
         
         // Verify the stream has active tracks
         const videoTracks = streamToRecord.getVideoTracks();
@@ -842,15 +845,27 @@ const startLocalRecording = () => {
             videoEnabled: videoTracks[0]?.enabled,
             videoReadyState: videoTracks[0]?.readyState,
             videoSettings: videoTracks[0]?.getSettings(),
-            audioSettings: audioTracks[0]?.getSettings(),
+            audioSettings: audioTracks.map(t => t.getSettings()),
             isScreenShare: isScreenSharing.value,
             allTracks: streamToRecord.getTracks().map(t => ({
                 kind: t.kind,
                 id: t.id.slice(0, 8),
                 enabled: t.enabled,
                 readyState: t.readyState,
-                label: t.label
+                label: t.label,
+                muted: t.kind === 'audio' ? t.muted : undefined
             }))
+        });
+        
+        // Ensure all audio tracks are enabled and not muted
+        audioTracks.forEach((track, index) => {
+            console.log(`[startLocalRecording] Audio track ${index}:`, {
+                label: track.label,
+                enabled: track.enabled,
+                muted: track.muted,
+                readyState: track.readyState
+            });
+            track.enabled = true;
         });
         
         if (videoTracks.length === 0) {
@@ -887,8 +902,12 @@ const startLocalRecording = () => {
                 kind: t.kind,
                 enabled: t.enabled,
                 readyState: t.readyState,
-                muted: t.muted
+                muted: t.kind === 'audio' ? t.muted : undefined,
+                label: t.label
             })));
+            console.log('[Recording] MediaRecorder audioBitsPerSecond:', mediaRecorder.value!.audioBitsPerSecond);
+            console.log('[Recording] MediaRecorder videoBitsPerSecond:', mediaRecorder.value!.videoBitsPerSecond);
+            console.log('[Recording] MediaRecorder mimeType:', mediaRecorder.value!.mimeType);
         };
         
         mediaRecorder.value.ondataavailable = (event) => {
