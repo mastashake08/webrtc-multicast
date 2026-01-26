@@ -367,6 +367,11 @@ const normalizeVideoToHD = (inputStream: MediaStream, cameraOverlay?: MediaStrea
     video.playsInline = true;
     video.muted = true;
     
+    // Explicitly play the video
+    video.play().catch(err => {
+        console.error('[normalizeVideoToHD] Error playing input video:', err);
+    });
+    
     // Create camera overlay video element if provided
     let cameraVideo: HTMLVideoElement | null = null;
     if (cameraOverlay) {
@@ -376,6 +381,11 @@ const normalizeVideoToHD = (inputStream: MediaStream, cameraOverlay?: MediaStrea
         cameraVideo.playsInline = true;
         cameraVideo.muted = true;
         cameraVideoElement.value = cameraVideo;
+        
+        // Explicitly play the camera video
+        cameraVideo.play().catch(err => {
+            console.error('[normalizeVideoToHD] Error playing camera video:', err);
+        });
     }
     
     // Camera overlay dimensions (in lower left corner)
@@ -459,9 +469,14 @@ const normalizeVideoToHD = (inputStream: MediaStream, cameraOverlay?: MediaStrea
         // Wait for main video
         await new Promise<void>(resolve => {
             if (video.readyState >= video.HAVE_CURRENT_DATA) {
+                console.log('[normalizeVideoToHD] Main video already ready');
                 resolve();
             } else {
-                video.addEventListener('loadeddata', () => resolve(), { once: true });
+                console.log('[normalizeVideoToHD] Waiting for main video loadeddata');
+                video.addEventListener('loadeddata', () => {
+                    console.log('[normalizeVideoToHD] Main video loadeddata event');
+                    resolve();
+                }, { once: true });
             }
         });
         
@@ -469,9 +484,14 @@ const normalizeVideoToHD = (inputStream: MediaStream, cameraOverlay?: MediaStrea
         if (cameraVideo) {
             await new Promise<void>(resolve => {
                 if (cameraVideo.readyState >= cameraVideo.HAVE_CURRENT_DATA) {
+                    console.log('[normalizeVideoToHD] Camera video already ready');
                     resolve();
                 } else {
-                    cameraVideo.addEventListener('loadeddata', () => resolve(), { once: true });
+                    console.log('[normalizeVideoToHD] Waiting for camera video loadeddata');
+                    cameraVideo.addEventListener('loadeddata', () => {
+                        console.log('[normalizeVideoToHD] Camera video loadeddata event');
+                        resolve();
+                    }, { once: true });
                 }
             });
         }
@@ -480,6 +500,15 @@ const normalizeVideoToHD = (inputStream: MediaStream, cameraOverlay?: MediaStrea
         if (cameraVideo) {
             console.log('[normalizeVideoToHD] Camera dimensions:', cameraVideo.videoWidth, 'x', cameraVideo.videoHeight);
         }
+        
+        // Check if video is actually playing
+        console.log('[normalizeVideoToHD] Main video state:', {
+            paused: video.paused,
+            ended: video.ended,
+            readyState: video.readyState,
+            currentTime: video.currentTime
+        });
+        
         drawFrame();
     };
     
