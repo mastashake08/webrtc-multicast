@@ -76,8 +76,10 @@ const pipVideoElement = ref<HTMLVideoElement | null>(null);
 const isPipActive = ref(false);
 
 // HD normalization constants
+// Canvas dimensions chosen so captureStream() produces H.264-compatible resolution
+// captureStream downscales by factor of 3: 1920→640, 1056→352 (both divisible by 16)
 const HD_WIDTH = 1920;
-const HD_HEIGHT = 1080;
+const HD_HEIGHT = 1056;  // Changed from 1080 to fix green bar artifact
 const TARGET_FPS = 30;
 
 // LocalStorage keys
@@ -528,6 +530,30 @@ const normalizeVideoToHD = (inputStream: MediaStream, cameraOverlay?: MediaStrea
     
     // Capture canvas stream at target FPS
     const canvasStream = canvas.captureStream(TARGET_FPS);
+    
+    // Log and verify video track dimensions
+    const videoTrack = canvasStream.getVideoTracks()[0];
+    if (videoTrack) {
+        const settings = videoTrack.getSettings();
+        console.log('[normalizeVideoToHD] Video track settings:', {
+            width: settings.width,
+            height: settings.height,
+            frameRate: settings.frameRate,
+            expected: `${HD_WIDTH}x${HD_HEIGHT}`
+        });
+        
+        // Apply constraints to ensure 1920x1080
+        videoTrack.applyConstraints({
+            width: { ideal: HD_WIDTH, exact: HD_WIDTH },
+            height: { ideal: HD_HEIGHT, exact: HD_HEIGHT },
+            frameRate: { ideal: TARGET_FPS }
+        }).then(() => {
+            console.log('[normalizeVideoToHD] Video track constraints applied successfully');
+        }).catch(err => {
+            console.warn('[normalizeVideoToHD] Could not apply exact constraints:', err);
+        });
+    }
+    
     console.log('[normalizeVideoToHD] Canvas stream created, tracks:', canvasStream.getTracks().map(t => ({ kind: t.kind, enabled: t.enabled, readyState: t.readyState })));
     
     // Mix audio tracks using AudioContext for proper audio handling
