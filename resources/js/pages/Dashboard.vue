@@ -333,7 +333,7 @@ const createCompositeStream = (screenStream: MediaStream, cameraOverlayStream: M
     return compositeStream;
 };
 
-const normalizeVideoToHD = (inputStream: MediaStream, cameraOverlay?: MediaStream): MediaStream => {
+const normalizeVideoToHD = (inputStream: MediaStream, cameraOverlay?: MediaStream, onReady?: () => void): MediaStream => {
     console.log('[normalizeVideoToHD] Creating HD normalized stream', { hasCameraOverlay: !!cameraOverlay });
     
     // Create canvas if not exists
@@ -341,6 +341,15 @@ const normalizeVideoToHD = (inputStream: MediaStream, cameraOverlay?: MediaStrea
         canvasRef.value = document.createElement('canvas');
         canvasRef.value.width = HD_WIDTH;
         canvasRef.value.height = HD_HEIGHT;
+        canvasRef.value.style.position = 'fixed';
+        canvasRef.value.style.top = '10px';
+        canvasRef.value.style.right = '10px';
+        canvasRef.value.style.width = '320px';
+        canvasRef.value.style.height = '180px';
+        canvasRef.value.style.zIndex = '9999';
+        canvasRef.value.style.border = '2px solid red';
+        document.body.appendChild(canvasRef.value);
+        console.log('[normalizeVideoToHD] Canvas appended to DOM for debugging');
     }
     
     const canvas = canvasRef.value;
@@ -377,11 +386,22 @@ const normalizeVideoToHD = (inputStream: MediaStream, cameraOverlay?: MediaStrea
     // Start drawing frames
     let animationId: number;
     let frameCount = 0;
+    let isReady = false;
     const drawFrame = () => {
         if (video.readyState >= video.HAVE_CURRENT_DATA && video.videoWidth > 0) {
             frameCount++;
             if (frameCount <= 5) {
                 console.log('[normalizeVideoToHD] Drawing frame', frameCount, 'video:', video.videoWidth, 'x', video.videoHeight);
+                if (cameraVideo) {
+                    console.log('[normalizeVideoToHD] Camera video:', cameraVideo.videoWidth, 'x', cameraVideo.videoHeight, 'ready:', cameraVideo.readyState);
+                }
+            }
+            
+            // Call onReady after first successful frame
+            if (!isReady && frameCount === 1 && onReady) {
+                isReady = true;
+                console.log('[normalizeVideoToHD] First frame drawn, calling onReady');
+                onReady();
             }
             
             // Calculate aspect ratio scaling for main video
@@ -434,22 +454,37 @@ const normalizeVideoToHD = (inputStream: MediaStream, cameraOverlay?: MediaStrea
         animationId = requestAnimationFrame(drawFrame);
     };
     
-    // Wait for video to be ready and playing before starting
-    const startDrawing = () => {
-        console.log('[normalizeVideoToHD] Video ready, starting to draw. Video dimensions:', video.videoWidth, 'x', video.videoHeight);
+    // Wait for video(s) to be ready before starting
+    const startDrawing = async () => {
+        // Wait for main video
+        await new Promise<void>(resolve => {
+            if (video.readyState >= video.HAVE_CURRENT_DATA) {
+                resolve();
+            } else {
+                video.addEventListener('loadeddata', () => resolve(), { once: true });
+            }
+        });
+        
+        // Wait for camera video if it exists
+        if (cameraVideo) {
+            await new Promise<void>(resolve => {
+                if (cameraVideo.readyState >= cameraVideo.HAVE_CURRENT_DATA) {
+                    resolve();
+                } else {
+                    cameraVideo.addEventListener('loadeddata', () => resolve(), { once: true });
+                }
+            });
+        }
+        
+        console.log('[normalizeVideoToHD] Both videos ready, starting to draw. Video dimensions:', video.videoWidth, 'x', video.videoHeight);
+        if (cameraVideo) {
+            console.log('[normalizeVideoToHD] Camera dimensions:', cameraVideo.videoWidth, 'x', cameraVideo.videoHeight);
+        }
         drawFrame();
     };
     
-    // Listen for when video actually starts playing
-    video.addEventListener('playing', startDrawing, { once: true });
-    
-    // Fallback: start after a short delay if 'playing' event doesn't fire
-    setTimeout(() => {
-        if (animationId === undefined) {
-            console.log('[normalizeVideoToHD] Fallback: starting draw without playing event');
-            drawFrame();
-        }
-    }, 100);
+    // Start the drawing process
+    startDrawing();
     
     video.onloadedmetadata = () => {
         console.log(`[normalizeVideoToHD] Metadata loaded. Input: ${video.videoWidth}x${video.videoHeight} → Output: ${HD_WIDTH}x${HD_HEIGHT}`);
@@ -459,12 +494,29 @@ const normalizeVideoToHD = (inputStream: MediaStream, cameraOverlay?: MediaStrea
     const canvasStream = canvas.captureStream(TARGET_FPS);
     console.log('[normalizeVideoToHD] Canvas stream created, tracks:', canvasStream.getTracks().map(t => ({ kind: t.kind, enabled: t.enabled, readyState: t.readyState })));
     
-    // Add audio from original stream
+    // Add audio from original stream (screen audio or main camera audio)
     const audioTracks = inputStream.getAudioTracks();
+    console.log('[normalizeVideoToHD] Input stream has', audioTracks.length, 'audio tracks');
     audioTracks.forEach(track => {
         canvasStream.addTrack(track);
-        console.log('[normalizeVideoToHD] Added audio track:', track.label);
+        console.log('[normalizeVideoToHD] Added audio track from input:', track.label, 'settings:', track.getSettings());
     });
+    
+    // Add microphone audio from camera overlay if available and different from input stream
+    if (cameraOverlay) {
+        const cameraAudioTracks = cameraOverlay.getAudioTracks();
+        console.log('[normalizeVideoToHD] Camera overlay has', cameraAudioTracks.length, 'audio tracks');
+        cameraAudioTracks.forEach(track => {
+            // Only add if we don't already have this track
+            const existingTrackIds = canvasStream.getAudioTracks().map(t => t.id);
+            if (!existingTrackIds.includes(track.id)) {
+                canvasStream.addTrack(track);
+                console.log('[normalizeVideoToHD] Added microphone audio track from camera:', track.label, 'settings:', track.getSettings());
+            }
+        });
+    }
+    
+    console.log('[normalizeVideoToHD] Final canvas stream audio tracks:', canvasStream.getAudioTracks().map(t => ({ id: t.id.slice(0, 8), label: t.label, enabled: t.enabled, muted: t.muted })));
     
     // Stop animation when stream ends
     canvasStream.getVideoTracks()[0].addEventListener('ended', () => {
@@ -503,9 +555,12 @@ const startStream = async () => {
         
         if (videoRef.value) {
             videoRef.value.srcObject = stream.value;
+            videoRef.value.play().catch(err => {
+                console.error('[startStream] Error playing video:', err);
+            });
         }
 
-        // Normalize video to HD before sending
+        // Normalize video to HD before sending (no onReady callback needed for regular camera)
         normalizedStream.value = normalizeVideoToHD(stream.value);
         console.log('[startStream] Created HD normalized stream');
 
@@ -575,9 +630,12 @@ const captureScreen = async () => {
         
         if (videoRef.value) {
             videoRef.value.srcObject = stream.value;
+            videoRef.value.play().catch(err => {
+                console.error('[captureScreen] Error playing screen capture:', err);
+            });
         }
 
-        // Normalize screen capture to HD before sending
+        // Normalize screen capture to HD before sending (no onReady callback needed for regular screen share)
         normalizedStream.value = normalizeVideoToHD(stream.value);
         console.log('[captureScreen] Created HD normalized screen stream');
 
@@ -885,9 +943,16 @@ const captureScreenWithCamera = async () => {
                 } : false
             };
             cameraStream.value = await navigator.mediaDevices.getUserMedia(cameraConstraints);
+            console.log('[captureScreenWithCamera] Created new camera stream with', cameraStream.value.getTracks().length, 'tracks');
+            // Ensure audio is enabled
+            cameraStream.value.getAudioTracks().forEach(track => {
+                track.enabled = true;
+                console.log('[captureScreenWithCamera] Camera audio track:', track.label, 'enabled:', track.enabled, 'muted:', track.muted);
+            });
         } else {
             // Save current camera stream
             cameraStream.value = stream.value.clone();
+            console.log('[captureScreenWithCamera] Cloned existing camera stream');
         }
         
         // Get screen share stream
@@ -906,16 +971,35 @@ const captureScreenWithCamera = async () => {
         console.log('[captureScreenWithCamera] Screen stream tracks:', screenStream.getTracks().map(t => ({
             kind: t.kind,
             label: t.label,
-            enabled: t.enabled
+            enabled: t.enabled,
+            readyState: t.readyState,
+            muted: t.kind === 'audio' ? t.muted : undefined
         })));
+        
+        // Check if video track is actually producing data
+        const videoTrack = screenStream.getVideoTracks()[0];
+        if (videoTrack) {
+            const settings = videoTrack.getSettings();
+            console.log('[captureScreenWithCamera] Video track settings:', settings);
+            console.log('[captureScreenWithCamera] Video track readyState:', videoTrack.readyState, 'enabled:', videoTrack.enabled);
+        }
+        
+        console.log('[captureScreenWithCamera] Screen has', screenStream.getAudioTracks().length, 'audio tracks');
+        console.log('[captureScreenWithCamera] Camera has', cameraStream.value?.getAudioTracks().length || 0, 'audio tracks');
         
         // If screen doesn't have audio, add microphone audio from camera stream
         if (screenStream.getAudioTracks().length === 0 && cameraStream.value) {
             const micAudioTracks = cameraStream.value.getAudioTracks();
             if (micAudioTracks.length > 0) {
                 screenStream.addTrack(micAudioTracks[0]);
-                console.log('[captureScreenWithCamera] Added microphone audio to screen stream');
+                console.log('[captureScreenWithCamera] Added microphone audio to screen stream:', micAudioTracks[0].label);
+            } else {
+                console.warn('[captureScreenWithCamera] No microphone audio available from camera stream');
             }
+        } else if (screenStream.getAudioTracks().length > 0) {
+            console.log('[captureScreenWithCamera] Using screen audio (system audio):', screenStream.getAudioTracks()[0].label);
+        } else {
+            console.warn('[captureScreenWithCamera] No audio tracks available from any source');
         }
         
         // Stop old stream if exists
@@ -926,14 +1010,60 @@ const captureScreenWithCamera = async () => {
         stream.value = screenStream;
         isScreenSharing.value = true;
         
-        // Create composite stream with camera overlay
-        normalizedStream.value = normalizeVideoToHD(screenStream, cameraStream.value);
-        console.log('[captureScreenWithCamera] Created composite stream with camera overlay');
-        
-        // Show the composited stream in the preview (so we can see the camera overlay)
+        // Show raw screen stream immediately so user sees something
         if (videoRef.value) {
-            videoRef.value.srcObject = normalizedStream.value;
+            videoRef.value.srcObject = screenStream;
+            videoRef.value.muted = true; // Ensure muted for autoplay
+            
+            // Log video element state
+            console.log('[captureScreenWithCamera] Video element state:', {
+                readyState: videoRef.value.readyState,
+                networkState: videoRef.value.networkState,
+                paused: videoRef.value.paused,
+                srcObject: !!videoRef.value.srcObject
+            });
+            
+            videoRef.value.play().then(() => {
+                console.log('[captureScreenWithCamera] Preview playing successfully');
+            }).catch(err => {
+                console.error('[captureScreenWithCamera] Error playing preview:', err);
+            });
+            
+            console.log('[captureScreenWithCamera] Preview showing raw screen stream');
         }
+        
+        // Create composite stream with camera overlay
+        normalizedStream.value = normalizeVideoToHD(screenStream, cameraStream.value, () => {
+            // This callback is called when the canvas has drawn its first frame
+            console.log('[captureScreenWithCamera] Canvas is ready, switching preview to composite');
+            if (videoRef.value && normalizedStream.value) {
+                // Load the new stream
+                videoRef.value.srcObject = normalizedStream.value;
+                videoRef.value.muted = true;
+                videoRef.value.load(); // Force reload
+                
+                // Wait for loadedmetadata before playing
+                videoRef.value.onloadedmetadata = () => {
+                    console.log('[captureScreenWithCamera] Composite stream metadata loaded');
+                    console.log('[captureScreenWithCamera] Video element:', {
+                        width: videoRef.value!.videoWidth,
+                        height: videoRef.value!.videoHeight,
+                        clientWidth: videoRef.value!.clientWidth,
+                        clientHeight: videoRef.value!.clientHeight,
+                        readyState: videoRef.value!.readyState,
+                        networkState: videoRef.value!.networkState
+                    });
+                    videoRef.value!.play().then(() => {
+                        console.log('[captureScreenWithCamera] Composite stream playing successfully');
+                    }).catch(err => {
+                        console.error('[captureScreenWithCamera] Error playing composite stream:', err);
+                    });
+                };
+                
+                console.log('[captureScreenWithCamera] Preview updated with composite stream');
+            }
+        });
+        console.log('[captureScreenWithCamera] Created composite stream with camera overlay');
         
         // Replace tracks on existing connection if connected
         if (isConnected.value) {
