@@ -395,6 +395,7 @@ const normalizeVideoToHD = (inputStream: MediaStream, cameraOverlay?: MediaStrea
             frameCount++;
             if (frameCount <= 5) {
                 console.log('[normalizeVideoToHD] Drawing frame', frameCount, 'video:', video.videoWidth, 'x', video.videoHeight);
+                console.log('[normalizeVideoToHD] Canvas size:', HD_WIDTH, 'x', HD_HEIGHT);
                 if (cameraVideo) {
                     console.log('[normalizeVideoToHD] Camera video:', cameraVideo.videoWidth, 'x', cameraVideo.videoHeight, 'ready:', cameraVideo.readyState);
                 }
@@ -426,6 +427,17 @@ const normalizeVideoToHD = (inputStream: MediaStream, cameraOverlay?: MediaStrea
                 drawHeight = HD_HEIGHT;
                 drawWidth = HD_HEIGHT * videoAspect;
                 offsetX = (HD_WIDTH - drawWidth) / 2;
+            }
+            
+            if (frameCount <= 3) {
+                console.log('[normalizeVideoToHD] Frame', frameCount, 'drawing calculations:', {
+                    videoAspect: videoAspect.toFixed(3),
+                    canvasAspect: canvasAspect.toFixed(3),
+                    drawWidth,
+                    drawHeight,
+                    offsetX,
+                    offsetY
+                });
             }
             
             // Clear canvas with black background
