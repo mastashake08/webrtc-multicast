@@ -523,29 +523,54 @@ const normalizeVideoToHD = (inputStream: MediaStream, cameraOverlay?: MediaStrea
     const canvasStream = canvas.captureStream(TARGET_FPS);
     console.log('[normalizeVideoToHD] Canvas stream created, tracks:', canvasStream.getTracks().map(t => ({ kind: t.kind, enabled: t.enabled, readyState: t.readyState })));
     
-    // Add audio from original stream (screen audio or main camera audio)
+    // Mix audio tracks using AudioContext for proper audio handling
     const audioTracks = inputStream.getAudioTracks();
-    console.log('[normalizeVideoToHD] Input stream has', audioTracks.length, 'audio tracks');
-    audioTracks.forEach(track => {
-        canvasStream.addTrack(track);
-        console.log('[normalizeVideoToHD] Added audio track from input:', track.label, 'settings:', track.getSettings());
-    });
+    const cameraAudioTracks = cameraOverlay?.getAudioTracks() || [];
+    const allAudioTracks = [...audioTracks, ...cameraAudioTracks];
     
-    // Add microphone audio from camera overlay if available and different from input stream
-    if (cameraOverlay) {
-        const cameraAudioTracks = cameraOverlay.getAudioTracks();
-        console.log('[normalizeVideoToHD] Camera overlay has', cameraAudioTracks.length, 'audio tracks');
-        cameraAudioTracks.forEach(track => {
-            // Only add if we don't already have this track
-            const existingTrackIds = canvasStream.getAudioTracks().map(t => t.id);
-            if (!existingTrackIds.includes(track.id)) {
-                canvasStream.addTrack(track);
-                console.log('[normalizeVideoToHD] Added microphone audio track from camera:', track.label, 'settings:', track.getSettings());
+    console.log('[normalizeVideoToHD] Input stream has', audioTracks.length, 'audio tracks');
+    
+    if (allAudioTracks.length > 0) {
+        try {
+            // Create AudioContext to mix audio
+            const audioContext = new AudioContext();
+            const destination = audioContext.createMediaStreamDestination();
+            
+            // Add all audio tracks to the mix
+            allAudioTracks.forEach((track, index) => {
+                const trackStream = new MediaStream([track]);
+                const source = audioContext.createMediaStreamSource(trackStream);
+                const gainNode = audioContext.createGain();
+                gainNode.gain.value = 1.0; // Full volume
+                source.connect(gainNode);
+                gainNode.connect(destination);
+                
+                console.log(`[normalizeVideoToHD] Mixed audio track ${index}:`, track.label, 'settings:', track.getSettings());
+            });
+            
+            // Add the mixed audio track to canvas stream
+            const mixedAudioTrack = destination.stream.getAudioTracks()[0];
+            if (mixedAudioTrack) {
+                canvasStream.addTrack(mixedAudioTrack);
+                console.log('[normalizeVideoToHD] Added mixed audio track to canvas stream');
             }
-        });
+        } catch (error) {
+            console.error('[normalizeVideoToHD] Error mixing audio:', error);
+            // Fallback: just add tracks directly
+            allAudioTracks.forEach(track => {
+                canvasStream.addTrack(track);
+                console.log('[normalizeVideoToHD] Added audio track (fallback):', track.label);
+            });
+        }
     }
     
-    console.log('[normalizeVideoToHD] Final canvas stream audio tracks:', canvasStream.getAudioTracks().map(t => ({ id: t.id.slice(0, 8), label: t.label, enabled: t.enabled, muted: t.muted })));
+    console.log('[normalizeVideoToHD] Final canvas stream tracks:', canvasStream.getTracks().map(t => ({ 
+        kind: t.kind,
+        id: t.id.slice(0, 8), 
+        label: t.label, 
+        enabled: t.enabled, 
+        muted: t.kind === 'audio' ? t.muted : undefined 
+    })));
     
     // Stop animation when stream ends
     canvasStream.getVideoTracks()[0].addEventListener('ended', () => {
