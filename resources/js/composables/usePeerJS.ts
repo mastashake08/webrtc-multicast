@@ -108,6 +108,16 @@ export function usePeerJS() {
             hasPeer: !!peer.value,
             receiverPeerId,
             streamTracks: stream.getTracks().length,
+            audioTracks: stream.getAudioTracks().length,
+            videoTracks: stream.getVideoTracks().length,
+            tracks: stream.getTracks().map(t => ({
+                kind: t.kind,
+                id: t.id.slice(0, 8),
+                label: t.label,
+                enabled: t.enabled,
+                readyState: t.readyState,
+                muted: t.kind === 'audio' ? (t as MediaStreamTrack & { muted?: boolean }).muted : undefined
+            }))
         });
 
         if (!peer.value) {

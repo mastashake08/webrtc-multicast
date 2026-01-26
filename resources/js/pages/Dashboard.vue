@@ -72,6 +72,8 @@ const recordingDuration = ref('00:00');
 const isScreenSharing = ref(false);
 const cameraStream = ref<MediaStream | null>(null);
 const cameraVideoElement = ref<HTMLVideoElement | null>(null);
+const pipVideoElement = ref<HTMLVideoElement | null>(null);
+const isPipActive = ref(false);
 
 // HD normalization constants
 const HD_WIDTH = 1920;
@@ -341,15 +343,6 @@ const normalizeVideoToHD = (inputStream: MediaStream, cameraOverlay?: MediaStrea
         canvasRef.value = document.createElement('canvas');
         canvasRef.value.width = HD_WIDTH;
         canvasRef.value.height = HD_HEIGHT;
-        canvasRef.value.style.position = 'fixed';
-        canvasRef.value.style.top = '10px';
-        canvasRef.value.style.right = '10px';
-        canvasRef.value.style.width = '320px';
-        canvasRef.value.style.height = '180px';
-        canvasRef.value.style.zIndex = '9999';
-        canvasRef.value.style.border = '2px solid red';
-        document.body.appendChild(canvasRef.value);
-        console.log('[normalizeVideoToHD] Canvas appended to DOM for debugging');
     }
     
     const canvas = canvasRef.value;
@@ -414,7 +407,7 @@ const normalizeVideoToHD = (inputStream: MediaStream, cameraOverlay?: MediaStrea
                 onReady();
             }
             
-            // Calculate aspect ratio scaling for main video
+            // Calculate aspect ratio scaling for main video (contain mode - show full video, letterbox if needed)
             const videoAspect = video.videoWidth / video.videoHeight;
             const canvasAspect = HD_WIDTH / HD_HEIGHT;
             
@@ -424,21 +417,23 @@ const normalizeVideoToHD = (inputStream: MediaStream, cameraOverlay?: MediaStrea
             let offsetY = 0;
             
             if (videoAspect > canvasAspect) {
-                // Video is wider - fit height
-                drawHeight = HD_HEIGHT;
-                drawWidth = HD_HEIGHT * videoAspect;
-                offsetX = (HD_WIDTH - drawWidth) / 2;
-            } else {
-                // Video is taller - fit width
+                // Video is wider - fit width, add letterbox top/bottom
                 drawWidth = HD_WIDTH;
                 drawHeight = HD_WIDTH / videoAspect;
                 offsetY = (HD_HEIGHT - drawHeight) / 2;
+            } else {
+                // Video is taller - fit height, add pillarbox left/right
+                drawHeight = HD_HEIGHT;
+                drawWidth = HD_HEIGHT * videoAspect;
+                offsetX = (HD_WIDTH - drawWidth) / 2;
             }
             
-            // Clear and draw main video
+            // Clear canvas with black background
             ctx.fillStyle = '#000000';
             ctx.fillRect(0, 0, HD_WIDTH, HD_HEIGHT);
-            ctx.drawImage(video, offsetX, offsetY, drawWidth, drawHeight);
+            
+            // Draw main video (full video visible, no cropping)
+            ctx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight, offsetX, offsetY, drawWidth, drawHeight);
             
             // Draw camera overlay in lower left corner if available
             if (cameraVideo && cameraVideo.readyState >= cameraVideo.HAVE_CURRENT_DATA && cameraVideo.videoWidth > 0) {
@@ -806,10 +801,18 @@ const startBroadcast = async () => {
     // Send only enabled URLs to backend first
     console.log('[Dashboard] Sending enabled RTMP URLs to backend:', urlsToStream);
     for (const url of urlsToStream) {
+        console.log('[Dashboard] Adding URL:', url);
         addRtmpUrlToPeer(url);
+        // Small delay between each URL
+        await new Promise(resolve => setTimeout(resolve, 200));
     }
 
-    // Wait a moment for URLs to be added
+    // Wait for all URLs to be registered
+    console.log('[Dashboard] Waiting for URLs to be registered...');
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    // Get status to verify URLs
+    getStatus();
     await new Promise(resolve => setTimeout(resolve, 500));
 
     console.log('[Dashboard] Calling startRecording()');
@@ -818,6 +821,7 @@ const startBroadcast = async () => {
     
     if (result) {
         console.log('Starting broadcast to:', urlsToStream);
+        isStreaming.value = true; // Update UI immediately
         // Poll status to update UI
         setTimeout(() => getStatus(), 1000);
     }
@@ -826,6 +830,7 @@ const startBroadcast = async () => {
 const stopBroadcast = () => {
     if (stopRecording()) {
         console.log('Stopping broadcast');
+        isStreaming.value = false; // Update UI immediately
         // Poll status to update UI
         setTimeout(() => getStatus(), 1000);
     }
@@ -1128,6 +1133,8 @@ const captureScreenWithCamera = async () => {
                     });
                     videoRef.value!.play().then(() => {
                         console.log('[captureScreenWithCamera] Composite stream playing successfully');
+                        // Auto-enable Picture-in-Picture
+                        setTimeout(() => enablePictureInPicture(), 500);
                     }).catch(err => {
                         console.error('[captureScreenWithCamera] Error playing composite stream:', err);
                     });
@@ -1153,7 +1160,74 @@ const captureScreenWithCamera = async () => {
     }
 };
 
+const enablePictureInPicture = async () => {
+    if (!normalizedStream.value) {
+        console.warn('[PiP] No normalized stream available');
+        return;
+    }
+    
+    try {
+        // Create a hidden video element for PiP
+        if (!pipVideoElement.value) {
+            pipVideoElement.value = document.createElement('video');
+            pipVideoElement.value.muted = true;
+            pipVideoElement.value.autoplay = true;
+        }
+        
+        pipVideoElement.value.srcObject = normalizedStream.value;
+        await pipVideoElement.value.play();
+        
+        // Request Picture-in-Picture
+        // @ts-ignore - PiP API types
+        await pipVideoElement.value.requestPictureInPicture();
+        isPipActive.value = true;
+        console.log('[PiP] Picture-in-Picture enabled');
+        
+        // Listen for PiP exit
+        // @ts-ignore
+        pipVideoElement.value.addEventListener('leavepictureinpicture', () => {
+            isPipActive.value = false;
+            console.log('[PiP] Picture-in-Picture exited');
+        }, { once: true });
+    } catch (error) {
+        console.error('[PiP] Error enabling Picture-in-Picture:', error);
+    }
+};
+
+const disablePictureInPicture = async () => {
+    try {
+        // @ts-ignore - PiP API types
+        if (document.pictureInPictureElement) {
+            // @ts-ignore
+            await document.exitPictureInPicture();
+            isPipActive.value = false;
+            console.log('[PiP] Picture-in-Picture disabled');
+        }
+    } catch (error) {
+        console.error('[PiP] Error disabling Picture-in-Picture:', error);
+    }
+};
+
+const togglePictureInPicture = async () => {
+    if (isPipActive.value) {
+        await disablePictureInPicture();
+    } else {
+        await enablePictureInPicture();
+    }
+};
+
 const stopScreenShare = async () => {
+    // Disable PiP if active
+    if (isPipActive.value) {
+        await disablePictureInPicture();
+    }
+    
+    // Clean up PiP video element
+    if (pipVideoElement.value) {
+        pipVideoElement.value.srcObject = null;
+        pipVideoElement.value = null;
+    }
+    
     // Stop camera overlay stream
     if (cameraStream.value) {
         cameraStream.value.getTracks().forEach(track => track.stop());
@@ -1272,6 +1346,15 @@ const stopScreenShare = async () => {
                                     Camera Overlay Active
                                 </div>
                                 
+                                <!-- Streaming indicator -->
+                                <div 
+                                    v-if="isStreaming"
+                                    class="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-2 rounded-full bg-red-600 px-3 py-1.5 text-sm font-medium text-white"
+                                >
+                                    <Circle class="h-3 w-3 fill-current animate-pulse" />
+                                    LIVE - Broadcasting to {{ enabledUrls.size }} destination{{ enabledUrls.size !== 1 ? 's' : '' }}
+                                </div>
+                                
                                 <!-- Overlay controls -->
                                 <div class="absolute bottom-4 left-1/2 flex -translate-x-1/2 gap-2">
                                     <Button
@@ -1317,6 +1400,18 @@ const stopScreenShare = async () => {
                                             title="Back to camera"
                                         >
                                             <Video class="h-4 w-4" />
+                                        </Button>
+                                        <Button
+                                            v-if="isScreenSharing && cameraStream"
+                                            @click="togglePictureInPicture"
+                                            :variant="isPipActive ? 'default' : 'secondary'"
+                                            size="sm"
+                                            title="Toggle Picture-in-Picture"
+                                        >
+                                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                <rect x="2" y="3" width="20" height="14" rx="2" />
+                                                <rect x="13" y="10" width="8" height="7" rx="1" />
+                                            </svg>
                                         </Button>
                                     </template>
                                 </div>
