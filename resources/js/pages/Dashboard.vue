@@ -75,11 +75,11 @@ const cameraVideoElement = ref<HTMLVideoElement | null>(null);
 const pipVideoElement = ref<HTMLVideoElement | null>(null);
 const isPipActive = ref(false);
 
-// HD normalization constants
-// Canvas dimensions chosen so captureStream() produces H.264-compatible resolution
-// captureStream downscales by factor of 3: 1920→640, 1056→352 (both divisible by 16)
-const HD_WIDTH = 1920;
-const HD_HEIGHT = 1056;  // Changed from 1080 to fix green bar artifact
+// 4K canvas dimensions
+// captureStream downscales by factor of 3: 3840→1280, 2160→720 (both divisible by 16)
+// Results in perfect 720p streaming quality
+const HD_WIDTH = 3840;
+const HD_HEIGHT = 2160;
 const TARGET_FPS = 30;
 
 // LocalStorage keys
@@ -1044,9 +1044,9 @@ const captureScreenWithCamera = async () => {
             const cameraConstraints: MediaStreamConstraints = {
                 video: videoEnabled.value ? {
                     deviceId: selectedVideoDevice.value ? { exact: selectedVideoDevice.value } : undefined,
-                    width: { ideal: 1280 },
-                    height: { ideal: 720 },
-                    frameRate: { ideal: 30 },
+                    width: { min: 1280, ideal: 1920 },
+                    height: { min: 720, ideal: 1056 },
+                    frameRate: { min: 30, ideal: 60 },
                     aspectRatio: { ideal: 16/9 }
                 } : false,
                 audio: audioEnabled.value ? {
