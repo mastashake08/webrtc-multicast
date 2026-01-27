@@ -633,6 +633,19 @@ const startStream = async () => {
         stream.value = await navigator.mediaDevices.getUserMedia(constraints);
         isScreenSharing.value = false;
         
+        // Log actual resolution received from camera
+        const videoTrack = stream.value.getVideoTracks()[0];
+        if (videoTrack) {
+            const settings = videoTrack.getSettings();
+            console.log('📹 Camera resolution:', `${settings.width}x${settings.height} @ ${settings.frameRate}fps`);
+            console.log('📹 Camera requested:', '3840x2160 (4K ideal), 1280x720 (720p min)');
+            
+            if (settings.width && settings.width < 1280) {
+                console.warn('⚠️ Camera is providing lower resolution than requested!');
+                console.warn('⚠️ Try checking: Camera hardware, browser permissions, or select a different camera');
+            }
+        }
+        
         if (videoRef.value) {
             videoRef.value.srcObject = stream.value;
             videoRef.value.play().catch(err => {
