@@ -75,10 +75,12 @@ const cameraVideoElement = ref<HTMLVideoElement | null>(null);
 const pipVideoElement = ref<HTMLVideoElement | null>(null);
 const isPipActive = ref(false);
 
-// Canvas dimensions - 4K (3840x2160) for high quality streaming
-const HD_WIDTH = 3840;
-const HD_HEIGHT = 2160;
-const TARGET_FPS = 30;
+// Canvas dimensions - 1080p to match typical camera resolution
+// Browser captureStream() auto-downscales large canvases, so matching
+// actual camera resolution prevents unnecessary downscaling
+const HD_WIDTH = 1920;
+const HD_HEIGHT = 1080;
+const TARGET_FPS = 60;  // Match camera's 60fps
 
 // LocalStorage keys
 const STORAGE_KEYS = {
